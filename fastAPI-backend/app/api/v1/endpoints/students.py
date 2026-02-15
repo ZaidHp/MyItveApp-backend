@@ -1,47 +1,58 @@
-from fastapi import APIRouter, Depends, status, UploadFile, File, HTTPException
-from app.models.student import StudentSignup, StudentStatusUpdate, UpdateStudent
+from fastapi import APIRouter, status, Depends, UploadFile, File
+from app.models.student import StudentSignup, UpdateStudent, StudentStatusUpdate
 from app.models.common import UserResponse
-from app.core.database import get_database
-from app.core.security import hash_password
 from app.api.deps import get_current_user
 from app.services import student_service
-from datetime import datetime
-from bson import ObjectId
 
 router = APIRouter()
-db = get_database()
-collection = db['Students']
 
-@router.post("/signup", response_model=UserResponse, status_code=201)
+# ==================== SIGNUP ====================
+@router.post("/signup", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
 async def signup(user: StudentSignup):
-    if await collection.find_one({"email": user.email}):
-        raise HTTPException(status_code=400, detail="Email exists")
-    if await collection.find_one({"username": user.username}):
-        raise HTTPException(status_code=400, detail="Username exists")
-
-    user_dict = user.model_dump()
-    user_dict['password'] = hash_password(user.password)
-    user_dict['is_active'] = True
-    user_dict['user_type'] = 'Student'
-    user_dict['created_at'] = datetime.now()
-    
-    result = await collection.insert_one(user_dict)
-    
+    result = await student_service.create_student(user)
     return UserResponse(
-        id=str(result.inserted_id),
-        email=user.email,
-        user_type='Student',
-        message="Student registered successfully"
+        id=result['id'],
+        email=result['email'],
+        user_type=result['user_type'],
+        message="Student registered successfully!"
     )
 
+# ==================== UPLOAD PROFILE ====================
 @router.post("/upload_profile")
 async def upload_profile(file: UploadFile = File(...), current_user=Depends(get_current_user)):
-    filename = await student_service.handle_profile_upload(file, current_user['sub'])
-    return {"message": "Image uploaded", "filename": filename}
+    # Extract ID from the JWT token
+    student_id = current_user.get("sub")
+    
+    filename = await student_service.upload_profile_image(file, student_id)
+    
+    return {
+        "message": "Image uploaded successfully", 
+        "filename": filename,
+        "url": f"/uploads/{filename}" # Optional: if you serve static files
+    }
 
-@router.put("/update")
-async def update_profile(data: UpdateStudent, current_user=Depends(get_current_user)):
-    updated_fields = await student_service.update_student_profile(current_user['sub'], data)
-    if not updated_fields:
-        return {"message": "No changes made"}
-    return {"message": "Updated successfully", "fields": updated_fields}
+# ==================== UPDATE PROFILE ====================
+@router.put("/update", status_code=status.HTTP_200_OK)
+async def update_student(update_data: UpdateStudent, current_user=Depends(get_current_user)):
+    student_id = current_user.get("sub")
+    
+    result = await student_service.update_student_profile(student_id, update_data)
+    
+    return {
+        "message": result.get("message"),
+        "student_id": student_id,
+        "updated_fields": result.get("updated_fields")
+    }
+
+# ==================== UPDATE STATUS ====================
+@router.patch("/status", status_code=status.HTTP_200_OK)
+async def update_student_status(data: StudentStatusUpdate, current_user=Depends(get_current_user)):
+    student_id = current_user.get("sub")
+    
+    result = await student_service.update_student_status(student_id, data)
+    
+    return {
+        "message": f"Student status updated to {result['status']} successfully!",
+        "student_id": student_id,
+        "is_active": result['is_active']
+    }

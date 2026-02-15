@@ -1,31 +1,117 @@
+# from fastapi import APIRouter, HTTPException, status
+# from app.models.student import StudentLogin
+# from app.models.common import UserResponse
+# from app.core.database import get_database
+# from app.core.security import verify_password, create_access_token, create_refresh_token
+
+# router = APIRouter()
+# db = get_database()
+# students_col = db['Students']
+
+# @router.post("/student/login", response_model=UserResponse)
+# async def login_student(data: StudentLogin):
+#     user = await students_col.find_one({
+#         "$or": [{"email": data.username_or_email}, {"username": data.username_or_email}]
+#     })
+    
+#     if not user or not verify_password(data.password, user['password']):
+#         raise HTTPException(status_code=401, detail="Invalid credentials")
+        
+#     if not user.get("is_active", True):
+#         raise HTTPException(status_code=403, detail="Account inactive")
+
+#     subject = {"sub": str(user["_id"]), "user_type": "Student"}
+#     return UserResponse(
+#         id=str(user["_id"]),
+#         email=user["email"],
+#         user_type="Student",
+#         message="Login successful",
+#         access_token=create_access_token(subject),
+#         refresh_token=create_refresh_token(subject)
+#     )
+
 from fastapi import APIRouter, HTTPException, status
-from app.models.student import StudentLogin
+from pydantic import BaseModel, Field
 from app.models.common import UserResponse
 from app.core.database import get_database
 from app.core.security import verify_password, create_access_token, create_refresh_token
 
 router = APIRouter()
 db = get_database()
+
 students_col = db['Students']
+admins_col = db['Admins']
+schools_col = db['Schools']
+promoters_col = db['Promoters']
 
-@router.post("/student/login", response_model=UserResponse)
-async def login_student(data: StudentLogin):
-    user = await students_col.find_one({
-        "$or": [{"email": data.username_or_email}, {"username": data.username_or_email}]
-    })
+class LoginRequest(BaseModel):
+    username_or_email: str = Field(..., description="Enter your Email or Username")
+    password: str = Field(..., min_length=8, description="Enter your password")
+
+@router.post("/login", response_model=UserResponse)
+async def login_user(data: LoginRequest):
+    """
+    Unified Login for All Users (Student, Admin, School, Promoter).
+    Accepts either Email or Username.
+    """
+    identifier = data.username_or_email
+    user = None
     
-    if not user or not verify_password(data.password, user['password']):
-        raise HTTPException(status_code=401, detail="Invalid credentials")
-        
-    if not user.get("is_active", True):
-        raise HTTPException(status_code=403, detail="Account inactive")
+    collections_map = [
+        (students_col, "Student"),
+        (admins_col, "Admin"),
+        (schools_col, "School/College"),
+        (promoters_col, "Promoter")
+    ]
 
-    subject = {"sub": str(user["_id"]), "user_type": "Student"}
+    for collection, role_name in collections_map:
+        user_found = await collection.find_one({
+            "$or": [
+                {"email": identifier},
+                {"username": identifier}
+            ]
+        })
+        
+        if user_found:
+            user = user_found
+            user_type = user.get("user_type", role_name)
+            break
+    
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found. Please check your username or email."
+        )
+
+    if not verify_password(data.password, user.get('password', '')):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid password!"
+        )
+
+    if not user.get("is_active", True):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Your account is inactive. Please contact support."
+        )
+
+    subject = {
+        "sub": str(user["_id"]),
+        "user_type": user_type,
+        "email": user.get("email")
+    }
+    
+    if "username" in user:
+        subject["username"] = user["username"]
+
+    access_token = create_access_token(subject)
+    refresh_token = create_refresh_token(subject)
+
     return UserResponse(
         id=str(user["_id"]),
         email=user["email"],
-        user_type="Student",
-        message="Login successful",
-        access_token=create_access_token(subject),
-        refresh_token=create_refresh_token(subject)
+        user_type=user_type,
+        message="Login successful!",
+        access_token=access_token,
+        refresh_token=refresh_token
     )
