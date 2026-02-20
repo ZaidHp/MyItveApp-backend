@@ -187,13 +187,22 @@ async def get_student_profile(student_id: str) -> dict:
     return profile_data
 
 async def update_student_status(student_id: str, data: StudentStatusUpdate) -> dict:
-
     new_is_active = True if data.status == "active" else False
+    is_deleted = True if data.status == "deleted" else False
+
+    update_doc = {
+        "is_active": new_is_active,
+        "is_deleted": is_deleted,
+        "updated_at": datetime.now()
+    }
+    
+    if data.reason:
+        update_doc["status_reason"] = data.reason
 
     try:
         result = await students_collection.update_one(
             {"_id": ObjectId(student_id)},
-            {"$set": {"is_active": new_is_active, "updated_at": datetime.now()}}
+            {"$set": update_doc}
         )
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid ID format")
@@ -203,9 +212,9 @@ async def update_student_status(student_id: str, data: StudentStatusUpdate) -> d
 
     return {
         "status": data.status,
-        "is_active": new_is_active
+        "is_active": new_is_active,
+        "is_deleted": is_deleted
     }
-
 async def upload_experience_image(file: UploadFile, student_id: str, exp_type: str) -> str:
 
     if exp_type not in ["work", "edu"]:

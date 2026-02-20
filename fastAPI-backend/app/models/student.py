@@ -199,4 +199,5 @@ class StudentProfileUpdate(BaseModel):
 
 
 class StudentStatusUpdate(BaseModel):
-    status: Literal["active", "inactive"] = Field(..., description="Set student status to 'active' or 'inactive'")
+    status: Literal["active", "inactive", "deleted"] = Field(..., description="Set student status to 'active', 'inactive', or 'deleted'")
+    reason: Optional[str] = Field(None, description="Reason for deactivation or deletion")

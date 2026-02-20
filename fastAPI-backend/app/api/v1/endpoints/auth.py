@@ -1,3 +1,4 @@
+from datetime import datetime
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel, Field
 from app.models.common import UserResponse
@@ -18,12 +19,10 @@ class LoginRequest(BaseModel):
 
 @router.post("/login", response_model=UserResponse)
 async def login_user(data: LoginRequest):
-    """
-    Unified Login for All Users (Student, Admin, School, Promoter).
-    Accepts either Email or Username.
-    """
+    
     identifier = data.username_or_email
     user = None
+    matched_collection = None
     
     collections_map = [
         (students_col, "Student"),
@@ -43,6 +42,7 @@ async def login_user(data: LoginRequest):
         if user_found:
             user = user_found
             user_type = user.get("user_type", role_name)
+            matched_collection = collection
             break
     
     if not user:
@@ -57,11 +57,22 @@ async def login_user(data: LoginRequest):
             detail="Invalid password!"
         )
 
-    if not user.get("is_active", True):
+    if user.get("is_deleted", False):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Your account is inactive. Please contact support."
+            detail="This account has been permanently deleted."
         )
+
+    if not user.get("is_active", True):
+        await matched_collection.update_one(
+            {"_id": user["_id"]},
+            {"$set": {
+                "is_active": True, 
+                "status_reason": None,
+                "updated_at": datetime.now()
+            }}
+        )
+        print(f"Account {user.get('username', identifier)} was auto-reactivated upon login.")
 
     subject = {
         "sub": str(user["_id"]),
