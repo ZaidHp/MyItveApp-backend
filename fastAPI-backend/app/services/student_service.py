@@ -1,7 +1,9 @@
 import os
+import aiofiles
 from datetime import datetime
 from uuid import uuid4
 from bson import ObjectId
+from bson.errors import InvalidId
 from fastapi import HTTPException, status, UploadFile
 from pymongo.collection import Collection
 
@@ -10,15 +12,11 @@ from app.core.config import settings
 from app.core.security import hash_password, verify_password
 from app.models.student import StudentSignup, UpdateStudent, StudentStatusUpdate
 
-# Initialize Database
 db = get_database()
 students_collection: Collection = db['Students']
 
 async def create_student(user: StudentSignup) -> dict:
-    """
-    Handles Student Registration: Checks uniqueness -> Hashes Password -> Saves to DB
-    """
-    # 1. Check if user already exists
+    
     if await students_collection.find_one({"username": user.username}):
         raise HTTPException(status_code=400, detail="Username already taken!")
     if await students_collection.find_one({"email": user.email}):
@@ -26,7 +24,6 @@ async def create_student(user: StudentSignup) -> dict:
     if await students_collection.find_one({"phone": user.phone}):
         raise HTTPException(status_code=400, detail="Phone number already registered!")
 
-    # 2. Prepare Data
     user_dict = user.model_dump()
     user_dict['password'] = hash_password(user.password)
     user_dict['is_active'] = True
@@ -34,7 +31,6 @@ async def create_student(user: StudentSignup) -> dict:
     user_dict['created_at'] = datetime.now()
     user_dict['profile_image'] = None
 
-    # 3. Insert into DB
     result = await students_collection.insert_one(user_dict)
     
     return {
@@ -44,104 +40,96 @@ async def create_student(user: StudentSignup) -> dict:
     }
 
 async def upload_profile_image(file: UploadFile, student_id: str) -> str:
-    """
-    Validates file extension, saves to disk, updates DB.
-    """
-    # 1. Validate Extension
+
+    try:
+        obj_id = ObjectId(student_id)
+    except InvalidId:
+        raise HTTPException(status_code=400, detail="Invalid student ID format.")
+
     ext = os.path.splitext(file.filename)[1].lower()
     if ext not in settings.ALLOWED_EXTENSIONS:
         raise HTTPException(status_code=400, detail="Only jpg, jpeg, png allowed")
 
-    # 2. Create Upload Directory if not exists
     os.makedirs(settings.UPLOAD_DIR, exist_ok=True)
 
-    # 3. Generate Unique Filename
     unique_name = f"{uuid4().hex}{ext}"
     file_path = os.path.join(settings.UPLOAD_DIR, unique_name)
 
-    # 4. Save File
     try:
-        with open(file_path, "wb") as f:
+        async with aiofiles.open(file_path, "wb") as f:
             content = await file.read()
-            f.write(content)
+            await f.write(content)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"File upload failed: {str(e)}")
 
-    # 5. Update Database
-    try:
-        await students_collection.update_one(
-            {"_id": ObjectId(student_id)},
-            {"$set": {"profile_image": unique_name}}
-        )
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid student ID format.")
+    await students_collection.update_one(
+        {"_id": obj_id},
+        {"$set": {"profile_image": unique_name, "updated_at": datetime.now()}}
+    )
 
     return unique_name
 
-async def update_student_profile(student_id: str, update_data: UpdateStudent) -> dict:
-    """
-    Handles Profile Update: Checks existence -> Validates Uniqueness -> Handles Password -> Updates DB
-    """
-    if not student_id:
-        raise HTTPException(status_code=400, detail="Student ID invalid.")
 
-    # 1. Fetch Current Student
+async def update_student_profile(student_id: str, update_data: UpdateStudent) -> dict:
+
     try:
-        student = await students_collection.find_one({"_id": ObjectId(student_id)})
-    except Exception:
+        obj_id = ObjectId(student_id)
+    except InvalidId:
         raise HTTPException(status_code=400, detail="Invalid student ID format.")
 
+    student = await students_collection.find_one({"_id": obj_id})
     if not student:
         raise HTTPException(status_code=404, detail="Student not found!")
 
-    # 2. Prepare Update Fields
     update_fields = {}
     
-    # List of simple fields to map directly
-    simple_fields = ["name", "bio", "gender", "date_of_birth", "location"]
-    data_dict = update_data.model_dump()
+    mapped_fields = [
+        "name", "bio", "gender", "date_of_birth", "location",
+        "work", "edu", "interests", "skills", "programming_languages", "languages"
+    ]
     
-    for field in simple_fields:
-        if data_dict.get(field) is not None:
+    data_dict = update_data.model_dump(exclude_unset=True)
+    
+    for field in mapped_fields:
+        if field in data_dict:
+            if field in ["work", "edu"] and data_dict[field] is not None:
+                current_db_data = student.get(field) or {}
+                
+                if data_dict[field].get("img") is None and current_db_data.get("img"):
+                    data_dict[field]["img"] = current_db_data.get("img")
+            
             update_fields[field] = data_dict[field]
 
-    # 3. Uniqueness Checks (Username, Email, Phone)
     async def check_and_set_unique(field_name, value):
         if value is not None:
-            # Check if value exists in ANY OTHER document
             existing = await students_collection.find_one({
                 field_name: value, 
-                "_id": {"$ne": ObjectId(student_id)}
+                "_id": {"$ne": obj_id}
             })
             if existing:
                 raise HTTPException(status_code=400, detail=f"{field_name.capitalize()} already taken!")
             update_fields[field_name] = value
 
-    await check_and_set_unique("username", update_data.username)
-    await check_and_set_unique("email", update_data.email)
-    await check_and_set_unique("phone", update_data.phone)
+    if "username" in data_dict:
+        await check_and_set_unique("username", data_dict["username"])
+    if "email" in data_dict:
+        await check_and_set_unique("email", data_dict["email"])
+    if "phone" in data_dict:
+        await check_and_set_unique("phone", data_dict["phone"])
 
-    # 4. Password Update Logic
-    if update_data.old_password:
-        # Verify old password
-        if not verify_password(update_data.old_password, student["password"]):
+    if data_dict.get("old_password"):
+        if not verify_password(data_dict["old_password"], student["password"]):
             raise HTTPException(status_code=400, detail="Old password is incorrect!")
         
-        # Confirm match (Double check, though Pydantic also checks this)
-        if update_data.new_password != update_data.confirm_new_password:
-            raise HTTPException(status_code=400, detail="New passwords do not match!")
-        
-        # Hash new password
-        update_fields["password"] = hash_password(update_data.new_password)
+        update_fields["password"] = hash_password(data_dict["new_password"])
 
-    # 5. Perform Update
     if not update_fields:
         return {"message": "No changes made", "updated_fields": []}
 
     update_fields["updated_at"] = datetime.now()
 
     await students_collection.update_one(
-        {"_id": ObjectId(student_id)},
+        {"_id": obj_id},
         {"$set": update_fields}
     )
 
@@ -149,6 +137,38 @@ async def update_student_profile(student_id: str, update_data: UpdateStudent) ->
         "message": "Student profile updated successfully!",
         "updated_fields": list(update_fields.keys())
     }
+
+async def get_student_profile(student_id: str) -> dict:
+
+    try:
+        obj_id = ObjectId(student_id)
+    except InvalidId:
+        raise HTTPException(status_code=400, detail="Invalid student ID format.")
+
+    student = await students_collection.find_one({"_id": obj_id})
+    
+    if not student:
+        raise HTTPException(status_code=404, detail="Student not found!")
+
+    work_data = student.get("work")
+    edu_data = student.get("edu")
+
+    profile_data = {
+        "username": student.get("username", ""),
+        "name": student.get("name", ""),
+        "bio": student.get("bio"),
+        "location": student.get("location"),
+        
+        "work": work_data if work_data else None,
+        "edu": edu_data if edu_data else None,
+        
+        "interests": student.get("interests", []),
+        "skills": student.get("skills", []),
+        "programming_languages": student.get("programming_languages", []),
+        "languages": student.get("languages", [])
+    }
+    
+    return profile_data
 
 async def update_student_status(student_id: str, data: StudentStatusUpdate) -> dict:
     """
@@ -171,3 +191,58 @@ async def update_student_status(student_id: str, data: StudentStatusUpdate) -> d
         "status": data.status,
         "is_active": new_is_active
     }
+
+async def upload_experience_image(file: UploadFile, student_id: str, exp_type: str) -> str:
+    """
+    Saves a work/edu logo to disk, deletes the old one (if it exists), 
+    and safely updates the DB even if the object is null.
+    """
+    if exp_type not in ["work", "edu"]:
+        raise HTTPException(status_code=400, detail="Invalid experience type")
+
+    try:
+        obj_id = ObjectId(student_id)
+    except InvalidId:
+        raise HTTPException(status_code=400, detail="Invalid student ID format.")
+
+    student = await students_collection.find_one({"_id": obj_id})
+    if not student:
+        raise HTTPException(status_code=404, detail="Student not found")
+
+    ext = os.path.splitext(file.filename)[1].lower()
+    if ext not in settings.ALLOWED_EXTENSIONS:
+        raise HTTPException(status_code=400, detail="Only jpg, jpeg, png allowed")
+
+    os.makedirs(settings.UPLOAD_DIR, exist_ok=True)
+    unique_name = f"{uuid4().hex}{ext}"
+    file_path = os.path.join(settings.UPLOAD_DIR, unique_name)
+
+    try:
+        async with aiofiles.open(file_path, "wb") as f:
+            content = await file.read()
+            await f.write(content)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"File upload failed: {str(e)}")
+
+    current_exp = student.get(exp_type)
+    
+    if not isinstance(current_exp, dict):
+        current_exp = {"name": "", "role": ""}
+        
+    old_image = current_exp.get("img")
+    if old_image:
+        old_image_path = os.path.join(settings.UPLOAD_DIR, old_image)
+        if os.path.exists(old_image_path):
+            try:
+                os.remove(old_image_path)
+                print(f"Deleted old {exp_type} image: {old_image}")
+            except Exception as e:
+                print(f"Failed to delete old image {old_image}: {str(e)}")
+
+    current_exp["img"] = unique_name
+
+    await students_collection.update_one(
+        {"_id": obj_id},
+        {"$set": {exp_type: current_exp, "updated_at": datetime.now()}}
+    )
+    return unique_name

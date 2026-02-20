@@ -1,5 +1,5 @@
 from fastapi import APIRouter, status, Depends, UploadFile, File
-from app.models.student import StudentSignup, UpdateStudent, StudentStatusUpdate
+from app.models.student import StudentSignup, UpdateStudent, StudentStatusUpdate, StudentProfileResponse, StudentProfileUpdate
 from app.models.common import UserResponse
 from app.api.deps import get_current_user
 from app.services import student_service
@@ -20,7 +20,6 @@ async def signup(user: StudentSignup):
 # ==================== UPLOAD PROFILE ====================
 @router.post("/upload_profile")
 async def upload_profile(file: UploadFile = File(...), current_user=Depends(get_current_user)):
-    # Extract ID from the JWT token
     student_id = current_user.get("sub")
     
     filename = await student_service.upload_profile_image(file, student_id)
@@ -55,4 +54,37 @@ async def update_student_status(data: StudentStatusUpdate, current_user=Depends(
         "message": f"Student status updated to {result['status']} successfully!",
         "student_id": student_id,
         "is_active": result['is_active']
+    }
+
+# ==================== GET PROFILE ====================
+@router.get("/profile", response_model=StudentProfileResponse, status_code=status.HTTP_200_OK)
+async def get_profile(current_user=Depends(get_current_user)):
+    student_id = current_user.get("sub")
+    
+    profile_data = await student_service.get_student_profile(student_id)
+    
+    return profile_data
+
+# ==================== UPDATE PROFILE DATA ====================
+@router.put("/profile", status_code=status.HTTP_200_OK)
+async def update_profile(profile_data: StudentProfileUpdate, current_user=Depends(get_current_user)):
+    student_id = current_user.get("sub")
+    
+    result = await student_service.update_student_profile(student_id, profile_data)
+    
+    return result
+
+@router.post("/upload_experience_image/{exp_type}", status_code=status.HTTP_200_OK)
+async def upload_experience_image(
+    exp_type: str, 
+    file: UploadFile = File(...), 
+    current_user=Depends(get_current_user)
+):
+    student_id = current_user.get("sub")
+    
+    filename = await student_service.upload_experience_image(file, student_id, exp_type)
+    
+    return {
+        "message": f"{exp_type} image uploaded successfully", 
+        "filename": filename
     }

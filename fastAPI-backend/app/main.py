@@ -4,12 +4,18 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
 from app.core.database import get_db_client
 from app.api.v1.api import api_router
+from fastapi.staticfiles import StaticFiles
+import os
+
+os.makedirs("uploads", exist_ok=True)
 
 app = FastAPI(
     title=settings.PROJECT_NAME,
     version=settings.VERSION,
     description="Scalable User Registration API"
 )
+
+app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
 
 # Middleware
 app.add_middleware(

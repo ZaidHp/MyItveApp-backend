@@ -1,29 +1,32 @@
 import re
 from datetime import datetime
-from typing import Literal, Optional
+from typing import List, Literal, Optional
 from pydantic import BaseModel, EmailStr, Field, field_validator, model_validator
 
+class ExperienceModel(BaseModel):
+    name: str
+    role: str
+    img: Optional[str] = None
+
+
 class StudentSignup(BaseModel):
-    # Basic Information
     name: str = Field(..., min_length=2, max_length=100)
     gender: Literal["male", "female"] = Field(...)
     date_of_birth: str = Field(..., pattern=r'^\d{4}-\d{2}-\d{2}$', description="Date format: YYYY-MM-DD")
     
-    # Account Information
     username: str = Field(..., min_length=3, max_length=30, pattern=r'^[a-zA-Z0-9_]+$')
     phone: str = Field(..., pattern=r'^\+92 \d{10}$')
     email: EmailStr
     password: str = Field(..., min_length=8, max_length=72)
     promo_code: Optional[str] = None
 
-    # Optional Profile Info
     bio: Optional[str] = None
     school: Optional[str] = None
     location: Optional[str] = None
-    education: Optional[str] = None
-    working: Optional[str] = None
-    interest: Optional[str] = None
+    edu: Optional[ExperienceModel] = None
+    work: Optional[ExperienceModel] = None
     
+    interests: list[str] = Field(default_factory=list)
     achievements: list[str] = Field(default_factory=list)
     skills: list[str] = Field(default_factory=list)
     programming_languages: list[str] = Field(default_factory=list)
@@ -159,6 +162,35 @@ class UpdateStudent(BaseModel):
                 raise ValueError('Date format must be YYYY-MM-DD')
             raise e
         return v
+
+
+class StudentProfileResponse(BaseModel):
+    username: str
+    name: str
+    bio: Optional[str] = None
+    location: Optional[str] = None
+    
+    work: Optional[ExperienceModel] = None
+    edu: Optional[ExperienceModel] = None
+    
+    interests: List[str] = Field(default_factory=list)
+    skills: List[str] = Field(default_factory=list)
+    programming_languages: List[str] = Field(default_factory=list)
+    languages: List[str] = Field(default_factory=list)
+
+
+class StudentProfileUpdate(BaseModel):
+    name: Optional[str] = None
+    bio: Optional[str] = None
+    location: Optional[str] = None
+    
+    work: Optional[ExperienceModel] = None
+    edu: Optional[ExperienceModel] = None
+    
+    interests: Optional[List[str]] = None
+    skills: Optional[List[str]] = None
+    programming_languages: Optional[List[str]] = None
+    languages: Optional[List[str]] = None
 
 
 class StudentStatusUpdate(BaseModel):
