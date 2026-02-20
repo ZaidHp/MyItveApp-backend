@@ -88,3 +88,9 @@ async def upload_experience_image(
         "message": f"{exp_type} image uploaded successfully", 
         "filename": filename
     }
+
+@router.delete("/remove_profile_image", status_code=status.HTTP_200_OK)
+async def remove_profile_image(current_user=Depends(get_current_user)):
+    student_id = current_user.get("sub")
+    result = await student_service.remove_profile_image(student_id)
+    return result

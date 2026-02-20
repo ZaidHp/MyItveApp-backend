@@ -89,6 +89,7 @@ class UpdateStudent(BaseModel):
     date_of_birth: Optional[str] = Field(None, pattern=r'^\d{4}-\d{2}-\d{2}$')
     location: Optional[str] = Field(None, min_length=2)
     username: Optional[str] = Field(None, min_length=3, max_length=30, pattern=r'^[a-zA-Z0-9_]+$')
+    school: Optional[str] = None
     email: Optional[EmailStr] = None
     phone: Optional[str] = Field(None, pattern=r'^\+92 \d{10}$')
 
@@ -169,6 +170,10 @@ class StudentProfileResponse(BaseModel):
     name: str
     bio: Optional[str] = None
     location: Optional[str] = None
+    gender: Optional[str] = None        
+    date_of_birth: Optional[str] = None 
+    school: Optional[str] = None       
+    profile_image: Optional[str] = None
     
     work: Optional[ExperienceModel] = None
     edu: Optional[ExperienceModel] = None

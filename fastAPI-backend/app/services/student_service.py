@@ -40,18 +40,20 @@ async def create_student(user: StudentSignup) -> dict:
     }
 
 async def upload_profile_image(file: UploadFile, student_id: str) -> str:
-
     try:
         obj_id = ObjectId(student_id)
     except InvalidId:
         raise HTTPException(status_code=400, detail="Invalid student ID format.")
+
+    student = await students_collection.find_one({"_id": obj_id})
+    if not student:
+        raise HTTPException(status_code=404, detail="Student not found")
 
     ext = os.path.splitext(file.filename)[1].lower()
     if ext not in settings.ALLOWED_EXTENSIONS:
         raise HTTPException(status_code=400, detail="Only jpg, jpeg, png allowed")
 
     os.makedirs(settings.UPLOAD_DIR, exist_ok=True)
-
     unique_name = f"{uuid4().hex}{ext}"
     file_path = os.path.join(settings.UPLOAD_DIR, unique_name)
 
@@ -61,6 +63,16 @@ async def upload_profile_image(file: UploadFile, student_id: str) -> str:
             await f.write(content)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"File upload failed: {str(e)}")
+
+    old_image = student.get("profile_image")
+    if old_image:
+        old_image_path = os.path.join(settings.UPLOAD_DIR, old_image)
+        if os.path.exists(old_image_path):
+            try:
+                os.remove(old_image_path)
+                print(f"Deleted old profile image: {old_image}")
+            except Exception as e:
+                print(f"Failed to delete old image {old_image}: {str(e)}")
 
     await students_collection.update_one(
         {"_id": obj_id},
@@ -84,7 +96,7 @@ async def update_student_profile(student_id: str, update_data: UpdateStudent) ->
     update_fields = {}
     
     mapped_fields = [
-        "name", "bio", "gender", "date_of_birth", "location",
+        "name", "bio", "gender", "date_of_birth", "location", "school",
         "work", "edu", "interests", "skills", "programming_languages", "languages"
     ]
     
@@ -158,6 +170,10 @@ async def get_student_profile(student_id: str) -> dict:
         "name": student.get("name", ""),
         "bio": student.get("bio"),
         "location": student.get("location"),
+        "gender": student.get("gender", ""),
+        "date_of_birth": student.get("date_of_birth", ""),
+        "school": student.get("school", ""),               
+        "profile_image": student.get("profile_image"),     
         
         "work": work_data if work_data else None,
         "edu": edu_data if edu_data else None,
@@ -171,9 +187,7 @@ async def get_student_profile(student_id: str) -> dict:
     return profile_data
 
 async def update_student_status(student_id: str, data: StudentStatusUpdate) -> dict:
-    """
-    Toggles student Active/Inactive status
-    """
+
     new_is_active = True if data.status == "active" else False
 
     try:
@@ -193,10 +207,7 @@ async def update_student_status(student_id: str, data: StudentStatusUpdate) -> d
     }
 
 async def upload_experience_image(file: UploadFile, student_id: str, exp_type: str) -> str:
-    """
-    Saves a work/edu logo to disk, deletes the old one (if it exists), 
-    and safely updates the DB even if the object is null.
-    """
+
     if exp_type not in ["work", "edu"]:
         raise HTTPException(status_code=400, detail="Invalid experience type")
 
@@ -246,3 +257,30 @@ async def upload_experience_image(file: UploadFile, student_id: str, exp_type: s
         {"$set": {exp_type: current_exp, "updated_at": datetime.now()}}
     )
     return unique_name
+
+async def remove_profile_image(student_id: str) -> dict:
+    try:
+        obj_id = ObjectId(student_id)
+    except InvalidId:
+        raise HTTPException(status_code=400, detail="Invalid student ID format.")
+
+    student = await students_collection.find_one({"_id": obj_id})
+    if not student:
+        raise HTTPException(status_code=404, detail="Student not found")
+
+    old_image = student.get("profile_image")
+    if old_image:
+        old_image_path = os.path.join(settings.UPLOAD_DIR, old_image)
+        if os.path.exists(old_image_path):
+            try:
+                os.remove(old_image_path)
+                print(f"Deleted profile image: {old_image}")
+            except Exception as e:
+                print(f"Failed to delete image {old_image}: {str(e)}")
+
+    await students_collection.update_one(
+        {"_id": obj_id},
+        {"$set": {"profile_image": None, "updated_at": datetime.now()}}
+    )
+
+    return {"message": "Profile picture removed successfully"}
