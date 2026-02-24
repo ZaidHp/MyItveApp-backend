@@ -1,12 +1,30 @@
+// const mongoose = require("mongoose");
+
+// const institutionSchema = new mongoose.Schema({
+//   name: { type: String, required: true },
+//   email: { type: String, required: true, unique: true },
+//   password: { type: String, required: true },
+  
+//   // initials: { type: String, required: true, uppercase: true },
+//   address: { type: String },
+// }, { timestamps: true });
+
+// module.exports = mongoose.model("Institution", institutionSchema);
+
+
 const mongoose = require("mongoose");
 
 const institutionSchema = new mongoose.Schema({
-  name: { type: String, required: true },
+  institute_name: { type: String, required: true },
   email: { type: String, required: true, unique: true },
   password: { type: String, required: true },
-  
-  // initials: { type: String, required: true, uppercase: true },
+  phone: { type: String },
   address: { type: String },
-}, { timestamps: true });
+  head_of_institute: { type: String },
+  user_type: { type: String, default: 'school/college' }
+}, { 
+  timestamps: true,
+  collection: "Schools"
+});
 
 module.exports = mongoose.model("Institution", institutionSchema);

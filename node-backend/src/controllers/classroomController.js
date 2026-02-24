@@ -5,7 +5,8 @@ const createClassroom = async (req, res) => {
   try {
     const { className, section } = req.body;
     const schoolId = req.school._id;
-    const schoolName = req.school.name;
+    // const schoolName = req.school.name;
+    const schoolName = req.school.institute_name;
     
     let finalInitials = "";
 
@@ -112,9 +113,83 @@ const validateClassCode = async (req, res) => {
   }
 };
 
+// const assignStudentToClass = async (req, res) => {
+//   try {
+//     const { classCode, studentCode } = req.body;
+
+//     if (!classCode) {
+//       return res.status(400).json({ message: "Please provide a Class Code." });
+//     }
+
+//     let studentToEnroll = null;
+
+//     if (req.userRole === "student") {
+//       studentToEnroll = req.student; 
+      
+//     } else if (req.userRole === "institution") {
+//       if (!studentCode) {
+//         return res.status(400).json({ 
+//           message: "Schools must provide a 'studentCode' to assign a student." 
+//         });
+//       }
+
+//       studentToEnroll = await Student.findOne({ studentCode });
+//       if (!studentToEnroll) {
+//         return res.status(404).json({ message: `Student with code ${studentCode} not found.` });
+//       }
+
+//     } else {
+//       return res.status(401).json({ message: "Unauthorized." });
+//     }
+
+//     const classroom = await Classroom.findOne({ classCode });
+//     if (!classroom) {
+//       return res.status(404).json({ message: "Invalid Classroom Code." });
+//     }
+
+//     if (req.userRole === "institution") {
+//       if (classroom.schoolId.toString() !== req.school._id.toString()) {
+//         return res.status(403).json({ 
+//           message: "Unauthorized: You cannot enroll students in classes belonging to other schools." 
+//         });
+//       }
+//     }
+
+//     if (!classroom.students) classroom.students = [];
+//     if (!studentToEnroll.enrolledClassrooms) studentToEnroll.enrolledClassrooms = [];
+
+//     if (classroom.students.includes(studentToEnroll._id)) {
+//       return res.status(400).json({ 
+//         message: `Student '${studentToEnroll.name}' is already enrolled in this classroom.` 
+//       });
+//     }
+
+//     classroom.students.push(studentToEnroll._id);
+//     await classroom.save();
+
+//     studentToEnroll.enrolledClassrooms.push(classroom._id);
+//     await studentToEnroll.save();
+
+//     res.status(200).json({
+//       success: true,
+//       message: "Student assigned successfully.",
+//       data: {
+//         studentName: studentToEnroll.name,
+//         studentCode: studentToEnroll.studentCode,
+//         className: classroom.className,
+//         classCode: classroom.classCode
+//       }
+//     });
+
+//   } catch (error) {
+//     console.error(error);
+//     res.status(500).json({ message: "Server Error", error: error.message });
+//   }
+// };
+
 const assignStudentToClass = async (req, res) => {
   try {
-    const { classCode, studentCode } = req.body;
+    const { classCode, username } = req.body;
 
     if (!classCode) {
       return res.status(400).json({ message: "Please provide a Class Code." });
@@ -126,15 +201,15 @@ const assignStudentToClass = async (req, res) => {
       studentToEnroll = req.student; 
       
     } else if (req.userRole === "institution") {
-      if (!studentCode) {
+      if (!username) {
         return res.status(400).json({ 
-          message: "Schools must provide a 'studentCode' to assign a student." 
+          message: "Schools must provide a 'username' to assign a student." 
         });
       }
 
-      studentToEnroll = await Student.findOne({ studentCode });
+      studentToEnroll = await Student.findOne({ username });
       if (!studentToEnroll) {
-        return res.status(404).json({ message: `Student with code ${studentCode} not found.` });
+        return res.status(404).json({ message: `Student with username '${username}' not found.` });
       }
 
     } else {
@@ -174,7 +249,7 @@ const assignStudentToClass = async (req, res) => {
       message: "Student assigned successfully.",
       data: {
         studentName: studentToEnroll.name,
-        studentCode: studentToEnroll.studentCode,
+        username: studentToEnroll.username,
         className: classroom.className,
         classCode: classroom.classCode
       }
@@ -239,7 +314,8 @@ const getSchoolStudentCount = async (req, res) => {
     res.status(200).json({
       success: true,
       data: {
-        schoolName: req.school.name,
+        // schoolName: req.school.name,
+        schoolName: req.school.institute_name,
         initials: req.school.initials,
         totalClassrooms: classrooms.length,
         totalStudents: uniqueStudentIds.size

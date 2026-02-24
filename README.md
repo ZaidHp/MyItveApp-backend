@@ -95,7 +95,7 @@ Create a `.env` file in the root of the `node-backend` directory:
 ```env
 PORT=5000
 MONGO_URI=mongodb://localhost:27017/ITVE_Database
-JWT_SECRET=your_shared_secret_key_here
+JWT_SECRET=my-super-secret-key
 ```
 
 ### Step 3: Run the Server
