@@ -33,7 +33,7 @@ async def register_school(user: SchoolCollegeSignup):
         "institute_name": user.institute_name,
         "address": user.address,
         "head_of_institute": user.head_of_institute,
-        "user_type": 'school/college',
+        "user_type": user.institution_type,  # 'school' or 'college'
         "is_active": True,
         "created_at": datetime.now()
     }

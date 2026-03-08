@@ -21,7 +21,12 @@ const institutionSchema = new mongoose.Schema({
   phone: { type: String },
   address: { type: String },
   head_of_institute: { type: String },
-  user_type: { type: String, default: 'school/college' }
+  user_type: { 
+    type: String, 
+    enum: ['school', 'college'],
+    required: true 
+  },
+  initials: { type: String }
 }, { 
   timestamps: true,
   collection: "Schools"

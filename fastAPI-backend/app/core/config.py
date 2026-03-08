@@ -7,7 +7,7 @@ class Settings(BaseSettings):
     
     # Database
     MONGO_URL: str = Field(..., alias="MONGO_URL")
-    DB_NAME: str = "ITVE_Database"
+    DB_NAME: str = "ITVE"
 
     # Security - We use Field(alias=...) to map the .env name to your Python variable name
     SECRET_KEY: str = Field(alias="JWT_SECRET_KEY")

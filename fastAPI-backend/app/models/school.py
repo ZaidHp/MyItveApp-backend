@@ -1,5 +1,5 @@
 import re
-from typing import Optional
+from typing import Literal, Optional
 from pydantic import BaseModel, EmailStr, Field, field_validator
 
 class SchoolCollegeSignup(BaseModel):
@@ -9,6 +9,7 @@ class SchoolCollegeSignup(BaseModel):
     institute_name: str = Field(..., min_length=2, max_length=200)
     address: str = Field(..., min_length=5)
     head_of_institute: Optional[str] = None
+    institution_type: Literal["school", "college"] = Field(..., description="Type: school or college")
     
     @field_validator('phone')
     @classmethod
