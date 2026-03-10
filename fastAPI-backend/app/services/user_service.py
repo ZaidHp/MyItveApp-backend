@@ -1,59 +1,186 @@
 from app.core.database import get_database
+from bson import ObjectId
+from fastapi import HTTPException
+from bson.errors import InvalidId
 
 db = get_database()
-admins_collection = db['Admins']
-students_collection = db['Students']
-schools_collection = db['Schools']
-promoters_collection = db['Promoters']
 
-async def get_user_counts() -> dict:
-    """
-    Fetch the count of users for each role and the total.
-    """
-    admins = await admins_collection.count_documents({})
-    students = await students_collection.count_documents({})
-    schools = await schools_collection.count_documents({})
-    promoters = await promoters_collection.count_documents({})
-    
-    total_users = admins + students + schools + promoters
-    
+admins_collection = db["Admins"]
+students_collection = db["Students"]
+schools_collection = db["Schools"]
+promoters_collection = db["Promoters"]
+
+collections = {
+    "admin": admins_collection,
+    "student": students_collection,
+    "school": schools_collection,
+    "promoter": promoters_collection
+}
+
+
+# -----------------------------
+# Helper: Validate ObjectId
+# -----------------------------
+def validate_object_id(id: str):
+    try:
+        return ObjectId(id)
+    except InvalidId:
+        raise HTTPException(status_code=400, detail="Invalid user ID")
+
+
+# -----------------------------
+# Helper: Find user in any collection
+# -----------------------------
+async def find_user_by_id(user_id: str):
+
+    obj_id = validate_object_id(user_id)
+
+    for role, collection in collections.items():
+
+        user = await collection.find_one({"_id": obj_id})
+
+        if user:
+            user["role"] = role
+            return user, collection
+
+    return None, None
+
+
+# -----------------------------
+# Get user counts
+# -----------------------------
+async def get_user_counts():
+
+    counts = {}
+
+    for role, collection in collections.items():
+        counts[role] = await collection.count_documents({})
+
+    total_users = sum(counts.values())
+
     return {
         "total_users": total_users,
-        "admins": admins,
-        "students": students,
-        "schools_colleges": schools,
-        "promoters": promoters
+        "admins": counts["admin"],
+        "students": counts["student"],
+        "schools_colleges": counts["school"],
+        "promoters": counts["promoter"]
     }
 
-async def get_all_users_list() -> dict:
-    """
-    Fetch all users from all collections, excluding sensitive data like passwords.
-    """
+
+# -----------------------------
+# Get all users
+# -----------------------------
+async def get_all_users_list():
+
     all_users = []
 
-    # Helper function to fetch and format users
-    async def fetch_from_collection(collection):
-        # Fetch users excluding the password field
-        users = await collection.find({}, {"password": 0}).to_list(length=100)
-        # Convert ObjectId to string for JSON serialization
-        for user in users:
-            user['_id'] = str(user['_id'])
-        return users
+    for role, collection in collections.items():
 
-    # Gather data from all collections
-    # Note: For very large datasets, you might want to implement pagination here
-    admins = await fetch_from_collection(admins_collection)
-    students = await fetch_from_collection(students_collection)
-    schools = await fetch_from_collection(schools_collection)
-    promoters = await fetch_from_collection(promoters_collection)
+        cursor = collection.find({}, {"password": 0})
 
-    # Combine into a single list
-    all_users.extend(admins)
-    all_users.extend(students)
-    all_users.extend(schools)
-    all_users.extend(promoters)
+        async for user in cursor:
+
+            user["_id"] = str(user["_id"])
+            user["role"] = role
+
+            all_users.append(user)
 
     return {
         "total_users": len(all_users),
         "users": all_users
     }
+
+
+# -----------------------------
+# Block user
+# -----------------------------
+async def block_user(user_id: str, blocked_user_id: str):
+
+    if user_id == blocked_user_id:
+        raise HTTPException(status_code=400, detail="Cannot block yourself")
+
+    user, user_collection = await find_user_by_id(user_id)
+
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    blocked_user, _ = await find_user_by_id(blocked_user_id)
+
+    if not blocked_user:
+        raise HTTPException(status_code=404, detail="Blocked user not found")
+
+    await user_collection.update_one(
+        {"_id": ObjectId(user_id)},
+        {"$addToSet": {"blocked_users": ObjectId(blocked_user_id)}}
+    )
+
+    return {"message": "User blocked successfully"}
+
+
+# -----------------------------
+# Unblock user
+# -----------------------------
+async def unblock_user(user_id: str, blocked_user_id: str):
+
+    user, user_collection = await find_user_by_id(user_id)
+
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    await user_collection.update_one(
+        {"_id": ObjectId(user_id)},
+        {"$pull": {"blocked_users": ObjectId(blocked_user_id)}}
+    )
+
+    return {"message": "User unblocked successfully"}
+
+
+# -----------------------------
+# Get blocked users
+# -----------------------------
+async def get_blocked_users(user_id: str):
+
+    user, _ = await find_user_by_id(user_id)
+
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    blocked_ids = user.get("blocked_users", [])
+
+    blocked_users = []
+
+    for blocked_id in blocked_ids:
+
+        blocked_user, _ = await find_user_by_id(str(blocked_id))
+
+        if blocked_user:
+            blocked_user["_id"] = str(blocked_user["_id"])
+            blocked_user.pop("password", None)
+
+            blocked_users.append(blocked_user)
+
+    return blocked_users
+
+
+# -----------------------------
+# Search users
+# -----------------------------
+async def search_users(name: str):
+
+    users = []
+
+    for role, collection in collections.items():
+
+        cursor = collection.find(
+            {"name": {"$regex": name, "$options": "i"}},
+            {"password": 0}
+        )
+
+        async for user in cursor:
+
+            user["_id"] = str(user["_id"])
+            user["role"] = role
+
+            users.append(user)
+
+    return users
