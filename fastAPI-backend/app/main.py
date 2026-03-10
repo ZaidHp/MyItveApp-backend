@@ -6,6 +6,8 @@ from app.core.database import get_db_client
 from app.api.v1.api import api_router
 from fastapi.staticfiles import StaticFiles
 import os
+from app.api.promoter_routes import router as promoter_router
+from app.api.v1.api import api_router
 
 os.makedirs("uploads", exist_ok=True)
 
@@ -33,7 +35,7 @@ async def startup_db_client():
 
 # Include API Router
 app.include_router(api_router, prefix="/api/v1")
-
+app.include_router(promoter_router)
 @app.get("/")
 async def root():
     return {"message": "Welcome to the API", "docs": "/docs"}
