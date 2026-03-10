@@ -8,6 +8,9 @@ from uuid import uuid4
 import aiofiles 
 from datetime import datetime
 from app.models.promoter import UpdatePromoter
+import random
+from app.services.whatsapp_service import send_whatsapp_otp
+from app.services.verify_update_otp import otp_store
 
 db = get_database()
 COLLECTION_NAME = "Promoters"
@@ -92,24 +95,48 @@ async def get_all_promoters():
 
 
 # 🔹 Update Promoter
-async def update_promoter(promoter_id: str, update_data: UpdatePromoter):
-    try:
-        update_dict = update_data.dict(exclude_none=True)  # ✅ convert model to dict
-        if not update_dict:
-            raise HTTPException(status_code=400, detail="No fields to update")
+otp_store = {}
 
-        result = await db[COLLECTION_NAME].update_one(
-            {"_id": ObjectId(promoter_id), ROLE_FIELD: "promoter"},
-            {"$set": {**update_dict, "updated_at": datetime.now()}}
-        )
+async def update_promoter(promoter_id: str, update_data: UpdatePromoter):
+
+    try:
+        obj_id = ObjectId(promoter_id)
     except InvalidId:
         raise HTTPException(status_code=400, detail="Invalid promoter ID")
 
-    if result.modified_count == 0:
+    update_dict = update_data.model_dump(exclude_none=True)
+
+    promoter = await db[COLLECTION_NAME].find_one({"_id": obj_id})
+
+    if not promoter:
         raise HTTPException(status_code=404, detail="Promoter not found")
 
-    return await get_promoter_by_id(promoter_id)
+    # Check if email or phone is being changed
+    if "email" in update_dict or "phone" in update_dict:
 
+        otp = str(random.randint(100000, 999999))
+
+        otp_store[promoter_id] = {
+            "otp": otp,
+            "data": update_dict
+        }
+
+        phone_number = promoter.get("phone")
+
+        # Send OTP via WhatsApp
+        await send_whatsapp_otp(phone_number, otp)
+
+        return {
+            "message": "OTP sent to WhatsApp. Please verify to complete update."
+        }
+
+    # Normal update
+    await db[COLLECTION_NAME].update_one(
+        {"_id": obj_id},
+        {"$set": update_dict}
+    )
+
+    return await get_promoter_by_id(promoter_id)
 
 # 🔹 Update Promoter Status
 async def update_promoter_status(promoter_id: str, status: str, reason: str = None):
@@ -170,16 +197,6 @@ async def upload_promoter_profile_image(file: UploadFile, promoter_id: str) -> s
     )
 
     return unique_name
-from bson import ObjectId
-from bson.errors import InvalidId
-from app.core.database import get_database
-from fastapi import HTTPException
-from datetime import datetime
-
-db = get_database()
-COLLECTION_NAME = "Promoters"
-ROLE_FIELD = "user_type"
-
 
 # 🔹 Deactivate Promoter (Soft delete)
 async def deactivate_promoter(promoter_id: str, reason: str = None):

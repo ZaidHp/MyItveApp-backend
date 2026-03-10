@@ -15,6 +15,12 @@ class Settings(BaseSettings):
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
     
+    # Twilio Credentials
+   
+    TWILIO_ACCOUNT_SID: str
+    TWILIO_AUTH_TOKEN: str
+    TWILIO_WHATSAPP_NUMBER: str
+    
     # Business Logic
     ADMIN_SECRET_CODE: str
     UPLOAD_DIR: str = "uploads"
