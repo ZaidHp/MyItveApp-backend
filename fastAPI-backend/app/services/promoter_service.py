@@ -9,8 +9,11 @@ import aiofiles
 from datetime import datetime
 from app.models.promoter import UpdatePromoter
 import random
+import time 
 from app.services.whatsapp_service import send_whatsapp_otp
-from app.services.verify_update_otp import otp_store
+from passlib.context import CryptContext
+
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 db = get_database()
 COLLECTION_NAME = "Promoters"
@@ -93,7 +96,6 @@ async def get_all_promoters():
 
     return promoters
 
-
 # 🔹 Update Promoter
 otp_store = {}
 
@@ -107,36 +109,82 @@ async def update_promoter(promoter_id: str, update_data: UpdatePromoter):
     update_dict = update_data.model_dump(exclude_none=True)
 
     promoter = await db[COLLECTION_NAME].find_one({"_id": obj_id})
-
     if not promoter:
         raise HTTPException(status_code=404, detail="Promoter not found")
 
-    # Check if email or phone is being changed
+    # ✅ Handle password change
+    if "new_password" in update_dict:
+
+        # 1. old_password must be provided
+        old_password = update_dict.pop("old_password", None)
+        if not old_password:
+            raise HTTPException(status_code=400, detail="old_password is required")
+
+        # 2. Verify old password matches DB
+        if not pwd_context.verify(old_password, promoter.get("password")):
+            raise HTTPException(status_code=400, detail="Old password is incorrect")
+
+        # 3. Hash new password and store it
+        update_dict["password"] = pwd_context.hash(update_dict.pop("new_password"))
+
+        # 4. Remove confirm_new_password — never save to DB
+        update_dict.pop("confirm_new_password", None)
+        update_dict.pop("old_password", None)
+
+    # ✅ Handle OTP for email or phone change
     if "email" in update_dict or "phone" in update_dict:
 
         otp = str(random.randint(100000, 999999))
 
         otp_store[promoter_id] = {
             "otp": otp,
-            "data": update_dict
+            "data": update_dict,
+            "expires_at": time.time() + 300
         }
 
         phone_number = promoter.get("phone")
-
-        # Send OTP via WhatsApp
         await send_whatsapp_otp(phone_number, otp)
 
-        return {
-            "message": "OTP sent to WhatsApp. Please verify to complete update."
-        }
+        return {"message": "OTP sent to WhatsApp. Please verify to complete update."}
 
-    # Normal update
+    # ✅ Normal update — no sensitive fields
     await db[COLLECTION_NAME].update_one(
         {"_id": obj_id},
         {"$set": update_dict}
     )
 
     return await get_promoter_by_id(promoter_id)
+# 🔹 Verify OTP → apply pending update
+async def verify_update_otp(promoter_id: str, otp: str):
+    stored = otp_store.get(promoter_id)
+
+    # 1. Does OTP exist?
+    if not stored:
+        raise HTTPException(status_code=400, detail="No OTP found. Request a new one.")
+
+    # 2. Has it expired?
+    if time.time() > stored["expires_at"]:
+        del otp_store[promoter_id]
+        raise HTTPException(status_code=400, detail="OTP expired. Request a new one.")
+
+    # 3. Does it match?
+    if stored["otp"] != otp:
+        raise HTTPException(status_code=400, detail="Invalid OTP")
+
+    # 4. ✅ Apply the update
+    update_data = stored["data"]
+    result = await db[COLLECTION_NAME].update_one(
+        {"_id": ObjectId(promoter_id)},
+        {"$set": update_data}
+    )
+
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Promoter not found")
+
+    # 5. Delete OTP so it can't be reused
+    del otp_store[promoter_id]
+
+    return {"message": "Promoter updated successfully"}
 
 # 🔹 Update Promoter Status
 async def update_promoter_status(promoter_id: str, status: str, reason: str = None):
