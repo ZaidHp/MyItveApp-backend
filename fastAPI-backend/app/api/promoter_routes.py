@@ -1,11 +1,12 @@
 from fastapi import APIRouter, HTTPException, UploadFile, File, Query
 from typing import List, Optional
-from app.services.verify_update_otp import verify_update_otp
+from app.services.whatsapp_service import send_whatsapp_otp
 from app.services.promoter_service import (
     get_promoter_by_id,
     get_all_promoters,
     create_promoter,
     update_promoter,
+    verify_update_otp,
     upload_promoter_profile_image,
     deactivate_promoter,
     delete_promoter,
@@ -105,8 +106,7 @@ async def permanent_delete(promoter_id: str):
 
     return await hard_delete_promoter(promoter_id)
 
-from app.services.verify_update_otp import verify_update_otp
 
-@router.post("/verify-update-otp")
-async def verify_update_otp_route(promoter_id: str, otp: str):
+@router.post("/{promoter_id}/verify-otp")
+async def verify_otp(promoter_id: str, otp: str):
     return await verify_update_otp(promoter_id, otp)
