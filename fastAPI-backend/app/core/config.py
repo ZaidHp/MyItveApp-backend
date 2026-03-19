@@ -14,17 +14,18 @@ class Settings(BaseSettings):
     ALGORITHM: str = Field(default="HS256", alias="JWT_ALGORITHM")
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
-    
-    # Twilio Credentials
-   
-    TWILIO_ACCOUNT_SID: str
-    TWILIO_AUTH_TOKEN: str
-    TWILIO_WHATSAPP_NUMBER: str
-    
+ 
     # Business Logic
     ADMIN_SECRET_CODE: str
     UPLOAD_DIR: str = "uploads"
     ALLOWED_EXTENSIONS: set = {".jpg", ".jpeg", ".png"}
+
+    SMTP_HOST: str
+    SMTP_PORT: int = 587
+    SMTP_USE_TLS: bool = True
+    SMTP_USERNAME: str
+    SMTP_PASSWORD: str
+    SMTP_FROM_EMAIL: str
 
     # This tells Pydantic to automatically load from the .env file
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")

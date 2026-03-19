@@ -10,8 +10,9 @@ from datetime import datetime
 from app.models.promoter import UpdatePromoter
 import random
 import time 
-from app.services.whatsapp_service import send_whatsapp_otp
 from passlib.context import CryptContext
+from app.services.otp_service import generate_and_store_otp, verify_otp
+from app.core.email_utils import send_otp_email
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
@@ -26,6 +27,10 @@ async def create_promoter(data: dict):
     data["campaigns"] = []
     data["skills"] = []
     data["social_links"] = []
+    data["settings"] = {
+        "seminar_invites": True,
+        "mentions_and_comments": True,
+        }
 
     result = await db[COLLECTION_NAME].insert_one(data)
     promoter = await db[COLLECTION_NAME].find_one({"_id": result.inserted_id})
@@ -94,13 +99,9 @@ async def get_all_promoters():
             "social_links": promoter.get("social_links", [])
         })
 
-    return promoters
 
-# 🔹 Update Promoter
-otp_store = {}
-
+# 🔹 Update Promoter Status
 async def update_promoter(promoter_id: str, update_data: UpdatePromoter):
-
     try:
         obj_id = ObjectId(promoter_id)
     except InvalidId:
@@ -108,100 +109,51 @@ async def update_promoter(promoter_id: str, update_data: UpdatePromoter):
 
     update_dict = update_data.model_dump(exclude_none=True)
 
+    # ✅ Strip all password fields — password changes go through /change-password only
+    for field in ("old_password", "new_password", "confirm_new_password", "password"):
+        update_dict.pop(field, None)
+
+    if not update_dict:
+        raise HTTPException(status_code=400, detail="No valid fields to update")
+
     promoter = await db[COLLECTION_NAME].find_one({"_id": obj_id})
     if not promoter:
         raise HTTPException(status_code=404, detail="Promoter not found")
 
-    # ✅ Handle password change
-    if "new_password" in update_dict:
-
-        # 1. old_password must be provided
-        old_password = update_dict.pop("old_password", None)
-        if not old_password:
-            raise HTTPException(status_code=400, detail="old_password is required")
-
-        # 2. Verify old password matches DB
-        if not pwd_context.verify(old_password, promoter.get("password")):
-            raise HTTPException(status_code=400, detail="Old password is incorrect")
-
-        # 3. Hash new password and store it
-        update_dict["password"] = pwd_context.hash(update_dict.pop("new_password"))
-
-        # 4. Remove confirm_new_password — never save to DB
-        update_dict.pop("confirm_new_password", None)
-        update_dict.pop("old_password", None)
-
-    # ✅ Handle OTP for email or phone change
-    if "email" in update_dict or "phone" in update_dict:
-
-        otp = str(random.randint(100000, 999999))
-
-        otp_store[promoter_id] = {
-            "otp": otp,
-            "data": update_dict,
-            "expires_at": time.time() + 300
-        }
-
-        phone_number = promoter.get("phone")
-        await send_whatsapp_otp(phone_number, otp)
-
-        return {"message": "OTP sent to WhatsApp. Please verify to complete update."}
-
-    # ✅ Normal update — no sensitive fields
     await db[COLLECTION_NAME].update_one(
         {"_id": obj_id},
         {"$set": update_dict}
     )
 
     return await get_promoter_by_id(promoter_id)
-# 🔹 Verify OTP → apply pending update
-async def verify_update_otp(promoter_id: str, otp: str):
-    stored = otp_store.get(promoter_id)
+# ── CHANGE PASSWORD ──────────────────────────────────────────────────────────
+async def change_promoter_password(promoter_id: str, old_password: str, new_password: str, confirm_new_password: str):
+    try:
+        obj_id = ObjectId(promoter_id)
+    except InvalidId:
+        raise HTTPException(status_code=400, detail="Invalid promoter ID")
 
-    # 1. Does OTP exist?
-    if not stored:
-        raise HTTPException(status_code=400, detail="No OTP found. Request a new one.")
-
-    # 2. Has it expired?
-    if time.time() > stored["expires_at"]:
-        del otp_store[promoter_id]
-        raise HTTPException(status_code=400, detail="OTP expired. Request a new one.")
-
-    # 3. Does it match?
-    if stored["otp"] != otp:
-        raise HTTPException(status_code=400, detail="Invalid OTP")
-
-    # 4. ✅ Apply the update
-    update_data = stored["data"]
-    result = await db[COLLECTION_NAME].update_one(
-        {"_id": ObjectId(promoter_id)},
-        {"$set": update_data}
-    )
-
-    if result.matched_count == 0:
+    promoter = await db[COLLECTION_NAME].find_one({"_id": obj_id, ROLE_FIELD: "promoter"})
+    if not promoter:
         raise HTTPException(status_code=404, detail="Promoter not found")
 
-    # 5. Delete OTP so it can't be reused
-    del otp_store[promoter_id]
+    if not pwd_context.verify(old_password, promoter.get("password")):
+        raise HTTPException(status_code=400, detail="Old password is incorrect")
 
-    return {"message": "Promoter updated successfully"}
+    if new_password != confirm_new_password:
+        raise HTTPException(status_code=400, detail="New passwords do not match")
 
-# 🔹 Update Promoter Status
-async def update_promoter_status(promoter_id: str, status: str, reason: str = None):
-    update_data = {"status": status}
-    if reason:
-        update_data["reason"] = reason
+    if old_password == new_password:
+        raise HTTPException(status_code=400, detail="New password must differ from old password")
 
-    try:
-        result = await db[COLLECTION_NAME].update_one(
-            {"_id": ObjectId(promoter_id)},
-            {"$set": update_data}
-        )
-    except InvalidId:
-        return False
+    hashed = pwd_context.hash(new_password)
 
-    return result.modified_count > 0
+    await db[COLLECTION_NAME].update_one(
+        {"_id": obj_id},
+        {"$set": {"password": hashed, "updated_at": datetime.now()}}
+    )
 
+    return {"message": "Password changed successfully"}
 
 # 🔹 Upload Profile Image
 async def upload_promoter_profile_image(file: UploadFile, promoter_id: str) -> str:
@@ -305,3 +257,138 @@ async def hard_delete_promoter(promoter_id: str):
         raise HTTPException(status_code=404, detail="Promoter not found")
 
     return {"message": "Promoter permanently deleted", "id": promoter_id}
+
+
+# ── CHANGE EMAIL — Step 1 ────────────────────────────────────────────────────
+async def request_email_change_otp(promoter_id: str, new_email: str):
+    try:
+        obj_id = ObjectId(promoter_id)
+    except InvalidId:
+        raise HTTPException(status_code=400, detail="Invalid promoter ID")
+
+    promoter = await db[COLLECTION_NAME].find_one({"_id": obj_id, ROLE_FIELD: "promoter"})
+    if not promoter:
+        raise HTTPException(status_code=404, detail="Promoter not found")
+
+    if promoter.get("email") == new_email:
+        raise HTTPException(status_code=400, detail="New email is the same as the current email")
+
+    existing = await db[COLLECTION_NAME].find_one({"email": new_email})
+    if existing:
+        raise HTTPException(status_code=409, detail="This email is already in use")
+
+    otp = await generate_and_store_otp(user_id=promoter_id, purpose="change_email", new_value=new_email)
+    await send_otp_email(to_email=new_email, otp=otp, purpose="change_email", new_value=new_email)
+
+    return {"message": f"OTP sent to {new_email}. It expires in 10 minutes."}
+
+
+# ── CHANGE EMAIL — Step 2 ────────────────────────────────────────────────────
+async def verify_email_change_otp(promoter_id: str, otp_input: str):
+    try:
+        obj_id = ObjectId(promoter_id)
+    except InvalidId:
+        raise HTTPException(status_code=400, detail="Invalid promoter ID")
+
+    result = await verify_otp(user_id=promoter_id, purpose="change_email", otp_input=otp_input)
+    if not result["valid"]:
+        raise HTTPException(status_code=400, detail=result["reason"])
+
+    new_email = result["new_value"]
+
+    # Race condition guard
+    existing = await db[COLLECTION_NAME].find_one({"email": new_email, "_id": {"$ne": obj_id}})
+    if existing:
+        raise HTTPException(status_code=409, detail="This email was taken by another account")
+
+    await db[COLLECTION_NAME].update_one(
+        {"_id": obj_id},
+        {"$set": {"email": new_email, "updated_at": datetime.now()}}
+    )
+    return {"message": "Email updated successfully", "email": new_email}
+
+
+# ── CHANGE PHONE — Step 1 ────────────────────────────────────────────────────
+async def request_phone_change_otp(promoter_id: str, new_phone: str):
+    try:
+        obj_id = ObjectId(promoter_id)
+    except InvalidId:
+        raise HTTPException(status_code=400, detail="Invalid promoter ID")
+
+    promoter = await db[COLLECTION_NAME].find_one({"_id": obj_id, ROLE_FIELD: "promoter"})
+    if not promoter:
+        raise HTTPException(status_code=404, detail="Promoter not found")
+
+    if promoter.get("phone") == new_phone:
+        raise HTTPException(status_code=400, detail="New phone is the same as the current phone")
+
+    current_email = promoter.get("email")
+    if not current_email:
+        raise HTTPException(status_code=400, detail="No email on file to send OTP to")
+
+    otp = await generate_and_store_otp(user_id=promoter_id, purpose="change_phone", new_value=new_phone)
+    await send_otp_email(to_email=current_email, otp=otp, purpose="change_phone", new_value=new_phone)
+
+    return {"message": "OTP sent to your registered email. It expires in 10 minutes."}
+
+
+# ── CHANGE PHONE — Step 2 ────────────────────────────────────────────────────
+async def verify_phone_change_otp(promoter_id: str, otp_input: str):
+    try:
+        obj_id = ObjectId(promoter_id)
+    except InvalidId:
+        raise HTTPException(status_code=400, detail="Invalid promoter ID")
+
+    result = await verify_otp(user_id=promoter_id, purpose="change_phone", otp_input=otp_input)
+    if not result["valid"]:
+        raise HTTPException(status_code=400, detail=result["reason"])
+
+    new_phone = result["new_value"]
+
+    await db[COLLECTION_NAME].update_one(
+        {"_id": obj_id},
+        {"$set": {"phone": new_phone, "updated_at": datetime.now()}}
+    )
+    return {"message": "Phone number updated successfully", "phone": new_phone}
+
+async def update_promoter_notification_settings(
+    promoter_id: str,
+    seminar_invites: bool | None,
+    mentions_and_comments: bool | None
+):
+    try:
+        obj_id = ObjectId(promoter_id)
+    except InvalidId:
+        raise HTTPException(status_code=400, detail="Invalid promoter ID")
+
+    promoter = await db[COLLECTION_NAME].find_one({"_id": obj_id, ROLE_FIELD: "promoter"})
+    if not promoter:
+        raise HTTPException(status_code=404, detail="Promoter not found")
+
+    update_fields = {}
+
+    if seminar_invites is not None:
+        update_fields["settings.seminar_invites"] = seminar_invites
+    if mentions_and_comments is not None:
+        update_fields["settings.mentions_and_comments"] = mentions_and_comments
+
+    if not update_fields:
+        raise HTTPException(status_code=400, detail="No settings provided to update")
+
+    update_fields["updated_at"] = datetime.now()
+
+    await db[COLLECTION_NAME].update_one(
+        {"_id": obj_id},
+        {"$set": update_fields}
+    )
+
+    updated = await db[COLLECTION_NAME].find_one({"_id": obj_id})
+    settings_data = updated.get("settings", {})
+
+    return {
+        "message": "Settings updated successfully",
+        "settings": {
+            "seminar_invites": settings_data.get("seminar_invites", True),
+            "mentions_and_comments": settings_data.get("mentions_and_comments", True),
+        }
+    }

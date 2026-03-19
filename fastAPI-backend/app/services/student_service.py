@@ -6,11 +6,13 @@ from bson import ObjectId
 from bson.errors import InvalidId
 from fastapi import HTTPException, status, UploadFile
 from pymongo.collection import Collection
-
+from datetime import date
 from app.core.database import get_database
 from app.core.config import settings
 from app.core.security import hash_password, verify_password
 from app.models.student import StudentSignup, UpdateStudent, StudentStatusUpdate
+from app.services.otp_service import generate_and_store_otp, verify_otp
+from app.core.email_utils import send_otp_email
 
 db = get_database()
 students_collection: Collection = db['Students']
@@ -30,6 +32,16 @@ async def create_student(user: StudentSignup) -> dict:
     user_dict['user_type'] = 'Student'
     user_dict['created_at'] = datetime.now()
     user_dict['profile_image'] = None
+    user_dict['settings'] = {
+        "mentions_and_comments": True,
+        "class_updates": True,
+        "study_reminders": True,
+        "seminar_invites": True,
+    }
+    user_dict['privacy'] = {
+    "content_visibility": "public",
+    "message_permission": "everyone",
+}
 
     result = await students_collection.insert_one(user_dict)
     
@@ -293,3 +305,323 @@ async def remove_profile_image(student_id: str) -> dict:
     )
 
     return {"message": "Profile picture removed successfully"}
+
+
+SCHOLARSHIP_COL = "scholarships"
+APPLICATION_COL = "scholarship_applications"
+
+
+def convert_ids(doc: dict) -> dict:
+    for key, value in doc.items():
+        if isinstance(value, ObjectId):
+            doc[key] = str(value)
+    return doc
+
+
+# ── Scholarships ──────────────────────────────────────────────────────────────
+
+async def create_scholarship(data: dict):
+    result = await db[SCHOLARSHIP_COL].insert_one(data)
+    scholarship = await db[SCHOLARSHIP_COL].find_one({"_id": result.inserted_id})
+    return convert_ids(scholarship)
+
+
+async def get_all_scholarships():
+    cursor = db[SCHOLARSHIP_COL].find({"status": "open"})
+    scholarships = []
+    async for s in cursor:
+        scholarships.append(convert_ids(s))
+    return scholarships
+
+
+async def get_scholarship_by_id(scholarship_id: str):
+    try:
+        scholarship = await db[SCHOLARSHIP_COL].find_one(
+            {"_id": ObjectId(scholarship_id)}
+        )
+    except InvalidId:
+        return None
+    return convert_ids(scholarship) if scholarship else None
+
+
+# ── Applications 
+
+async def apply_for_scholarship(student: dict, data: dict):
+    scholarship_id = data.get("scholarship_id")
+
+    # ✅ Validate student exists and is actually a student
+    try:
+        obj_id = ObjectId(student["id"])
+    except InvalidId:
+        return {"error": "Invalid student ID"}
+
+    student_doc = await students_collection.find_one({"_id": obj_id})
+    if not student_doc:
+        return {"error": "Student not found"}
+    if student_doc.get("user_type") != "Student":
+        return {"error": "Only students can apply for scholarships"}
+    if not student_doc.get("is_active", False):
+        return {"error": "Your account is inactive"}
+    if student_doc.get("is_deleted", False):
+        return {"error": "Your account has been deleted"}
+
+    # ✅ Auto-fill name and email from DB instead of trusting user input
+    data["name"] = student_doc.get("name")
+    data["email"] = student_doc.get("email")
+
+    # Check scholarship exists
+    scholarship = await get_scholarship_by_id(scholarship_id)
+    if not scholarship:
+        return {"error": "Scholarship not found"}
+
+    # Check if open
+    if scholarship["status"] != "open":
+        return {"error": "This scholarship is closed"}
+
+    # Check deadline
+    deadline = date.fromisoformat(scholarship["deadline"])
+    if date.today() > deadline:
+        return {"error": "Scholarship deadline has passed"}
+
+    # Check GPA requirement
+    if scholarship.get("min_gpa") and data["gpa"] < scholarship["min_gpa"]:
+        return {"error": f"Minimum GPA required is {scholarship['min_gpa']}"}
+
+    # Check major requirement
+    if scholarship.get("major_required"):
+        if data["major"].lower() != scholarship["major_required"].lower():
+            return {"error": f"This scholarship is only for {scholarship['major_required']} majors"}
+
+    # Check duplicate application
+    existing = await db[APPLICATION_COL].find_one({
+        "applied_by": student["id"],
+        "scholarship_id": scholarship_id
+    })
+    if existing:
+        return {"error": "You have already applied for this scholarship"}
+
+    # Build application
+    application = {
+        **data,
+        "applied_by": student["id"],
+        "username": student_doc.get("username"),
+        "applied_at": str(date.today()),
+        "application_status": "pending"
+    }
+
+    result = await db[APPLICATION_COL].insert_one(application)
+    application["_id"] = str(result.inserted_id)
+    return application
+
+# ── CHANGE EMAIL ───────────
+async def request_student_email_change_otp(student_id: str, new_email: str):
+    try:
+        obj_id = ObjectId(student_id)
+    except InvalidId:
+        raise HTTPException(status_code=400, detail="Invalid student ID")
+
+    student = await students_collection.find_one({"_id": obj_id})
+    if not student:
+        raise HTTPException(status_code=404, detail="Student not found")
+
+    if student.get("email") == new_email:
+        raise HTTPException(status_code=400, detail="New email is the same as the current email")
+
+    existing = await students_collection.find_one({"email": new_email})
+    if existing:
+        raise HTTPException(status_code=409, detail="This email is already in use")
+
+    otp = await generate_and_store_otp(promoter_id=student_id, purpose="change_email", new_value=new_email)
+    await send_otp_email(to_email=new_email, otp=otp, purpose="change_email", new_value=new_email)
+
+    return {"message": f"OTP sent to {new_email}. It expires in 10 minutes."}
+
+
+# ── CHANGE EMAIL — Step 2 ────────────────────────────────────────────────────
+async def verify_student_email_change_otp(student_id: str, otp_input: str):
+    try:
+        obj_id = ObjectId(student_id)
+    except InvalidId:
+        raise HTTPException(status_code=400, detail="Invalid student ID")
+
+    result = await verify_otp(promoter_id=student_id, purpose="change_email", otp_input=otp_input)
+    if not result["valid"]:
+        raise HTTPException(status_code=400, detail=result["reason"])
+
+    new_email = result["new_value"]
+
+    existing = await students_collection.find_one({"email": new_email, "_id": {"$ne": obj_id}})
+    if existing:
+        raise HTTPException(status_code=409, detail="This email was taken by another account")
+
+    await students_collection.update_one(
+        {"_id": obj_id},
+        {"$set": {"email": new_email, "updated_at": datetime.now()}}
+    )
+    return {"message": "Email updated successfully", "email": new_email}
+
+
+# ── CHANGE PHONE — Step 1 ────────────────────────────────────────────────────
+async def request_student_phone_change_otp(student_id: str, new_phone: str):
+    try:
+        obj_id = ObjectId(student_id)
+    except InvalidId:
+        raise HTTPException(status_code=400, detail="Invalid student ID")
+
+    student = await students_collection.find_one({"_id": obj_id})
+    if not student:
+        raise HTTPException(status_code=404, detail="Student not found")
+
+    if student.get("phone") == new_phone:
+        raise HTTPException(status_code=400, detail="New phone is the same as the current phone")
+
+    current_email = student.get("email")
+    if not current_email:
+        raise HTTPException(status_code=400, detail="No email on file to send OTP to")
+
+    otp = await generate_and_store_otp(promoter_id=student_id, purpose="change_phone", new_value=new_phone)
+    await send_otp_email(to_email=current_email, otp=otp, purpose="change_phone", new_value=new_phone)
+
+    return {"message": "OTP sent to your registered email. It expires in 10 minutes."}
+
+
+# ── CHANGE PHONE — Step 2 ────────────────────────────────────────────────────
+async def verify_student_phone_change_otp(student_id: str, otp_input: str):
+    try:
+        obj_id = ObjectId(student_id)
+    except InvalidId:
+        raise HTTPException(status_code=400, detail="Invalid student ID")
+
+    result = await verify_otp(promoter_id=student_id, purpose="change_phone", otp_input=otp_input)
+    if not result["valid"]:
+        raise HTTPException(status_code=400, detail=result["reason"])
+
+    new_phone = result["new_value"]
+
+    await students_collection.update_one(
+        {"_id": obj_id},
+        {"$set": {"phone": new_phone, "updated_at": datetime.now()}}
+    )
+    return {"message": "Phone number updated successfully", "phone": new_phone}
+
+
+# ── CHANGE PASSWORD ───────────────────────────────────────────────────────────
+async def change_student_password(student_id: str, old_password: str, new_password: str, confirm_new_password: str):
+    try:
+        obj_id = ObjectId(student_id)
+    except InvalidId:
+        raise HTTPException(status_code=400, detail="Invalid student ID")
+
+    student = await students_collection.find_one({"_id": obj_id})
+    if not student:
+        raise HTTPException(status_code=404, detail="Student not found")
+
+    if not verify_password(old_password, student.get("password")):
+        raise HTTPException(status_code=400, detail="Old password is incorrect")
+
+    if new_password != confirm_new_password:
+        raise HTTPException(status_code=400, detail="New passwords do not match")
+
+    if old_password == new_password:
+        raise HTTPException(status_code=400, detail="New password must differ from old password")
+
+    await students_collection.update_one(
+        {"_id": obj_id},
+        {"$set": {"password": hash_password(new_password), "updated_at": datetime.now()}}
+    )
+    return {"message": "Password changed successfully"}
+async def update_student_notification_settings(
+    student_id: str,
+    mentions_and_comments: bool | None,
+    class_updates: bool | None,
+    study_reminders: bool | None,
+    seminar_invites: bool | None
+):
+    try:
+        obj_id = ObjectId(student_id)
+    except InvalidId:
+        raise HTTPException(status_code=400, detail="Invalid student ID")
+
+    student = await students_collection.find_one({"_id": obj_id})
+    if not student:
+        raise HTTPException(status_code=404, detail="Student not found")
+
+    update_fields = {}
+
+    if mentions_and_comments is not None:
+        update_fields["settings.mentions_and_comments"] = mentions_and_comments
+    if class_updates is not None:
+        update_fields["settings.class_updates"] = class_updates
+    if study_reminders is not None:
+        update_fields["settings.study_reminders"] = study_reminders
+    if seminar_invites is not None:
+        update_fields["settings.seminar_invites"] = seminar_invites
+
+    if not update_fields:
+        raise HTTPException(status_code=400, detail="No settings provided to update")
+
+    update_fields["updated_at"] = datetime.now()
+
+    await students_collection.update_one(
+        {"_id": obj_id},
+        {"$set": update_fields}
+    )
+
+    updated = await students_collection.find_one({"_id": obj_id})
+    settings_data = updated.get("settings", {})
+
+    return {
+        "message": "Settings updated successfully",
+        "settings": {
+            "mentions_and_comments": settings_data.get("mentions_and_comments", True),
+            "class_updates": settings_data.get("class_updates", True),
+            "study_reminders": settings_data.get("study_reminders", True),
+            "seminar_invites": settings_data.get("seminar_invites", True),
+        }
+    }
+async def update_student_privacy_settings(
+    student_id: str,
+    content_visibility: str | None,
+    message_permission: str | None
+):
+    try:
+        obj_id = ObjectId(student_id)
+    except InvalidId:
+        raise HTTPException(status_code=400, detail="Invalid student ID")
+
+    student = await students_collection.find_one({"_id": obj_id})
+    if not student:
+        raise HTTPException(status_code=404, detail="Student not found")
+
+    update_fields = {}
+
+    if content_visibility is not None:
+        if content_visibility not in ["public", "private"]:
+            raise HTTPException(status_code=400, detail="content_visibility must be 'public' or 'private'")
+        update_fields["privacy.content_visibility"] = content_visibility
+
+    if message_permission is not None:
+        if message_permission not in ["everyone", "friends_only"]:
+            raise HTTPException(status_code=400, detail="message_permission must be 'everyone' or 'friends_only'")
+        update_fields["privacy.message_permission"] = message_permission
+
+    if not update_fields:
+        raise HTTPException(status_code=400, detail="No privacy settings provided to update")
+
+    update_fields["updated_at"] = datetime.now()
+
+    await students_collection.update_one(
+        {"_id": obj_id},
+        {"$set": update_fields}
+    )
+
+    updated = await students_collection.find_one({"_id": obj_id})
+    privacy_data = updated.get("privacy", {})
+
+    return {
+        "message": "Privacy settings updated successfully",
+        "privacy": {
+            "content_visibility": privacy_data.get("content_visibility", "public"),
+            "message_permission": privacy_data.get("message_permission", "everyone"),
+        }
+    }

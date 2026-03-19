@@ -165,22 +165,35 @@ async def get_blocked_users(user_id: str):
 # -----------------------------
 # Search users
 # -----------------------------
-async def search_users(name: str):
+from bson import ObjectId
 
+def convert_objectids(doc):
+    for key, value in doc.items():
+        if isinstance(value, ObjectId):
+            doc[key] = str(value)
+        elif isinstance(value, dict):
+            doc[key] = convert_objectids(value)
+        elif isinstance(value, list):
+            doc[key] = [
+                convert_objectids(i) if isinstance(i, dict)
+                else str(i) if isinstance(i, ObjectId)
+                else i
+                for i in value
+            ]
+    return doc
+
+async def search_users(name: str):
     users = []
 
     for role, collection in collections.items():
-
         cursor = collection.find(
             {"name": {"$regex": name, "$options": "i"}},
             {"password": 0}
         )
 
         async for user in cursor:
-
-            user["_id"] = str(user["_id"])
+            user = convert_objectids(user)  # handles all nested ObjectIds
             user["role"] = role
-
             users.append(user)
 
     return users

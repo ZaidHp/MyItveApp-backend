@@ -201,3 +201,61 @@ class StudentProfileUpdate(BaseModel):
 class StudentStatusUpdate(BaseModel):
     status: Literal["active", "inactive", "deleted"] = Field(..., description="Set student status to 'active', 'inactive', or 'deleted'")
     reason: Optional[str] = Field(None, description="Reason for deactivation or deletion")
+
+
+class ScholarshipCreate(BaseModel):
+    title: str = Field(..., min_length=3, max_length=200)
+    description: str = Field(..., min_length=10)
+    amount: float = Field(..., gt=0)
+    deadline: str = Field(..., pattern=r'^\d{4}-\d{2}-\d{2}$')
+    major_required: Optional[str] = None
+    min_gpa: Optional[float] = Field(None, ge=0.0, le=4.0)
+    status: Literal["open", "closed"] = "open"
+
+    @field_validator('deadline')
+    @classmethod
+    def validate_deadline(cls, v):
+        from datetime import date
+        deadline = date.fromisoformat(v)
+        if deadline <= date.today():
+            raise ValueError('Deadline must be a future date')
+        return v
+
+
+class ScholarshipApplication(BaseModel):
+    scholarship_id: str
+
+    # Personal Info — name & email auto-filled from token, only student_id needed
+    student_id: str = Field(..., description="University student ID")
+
+    # Academic Info
+    gpa: float = Field(..., ge=0.0, le=4.0)
+    major: str = Field(..., min_length=2, max_length=100)
+    year: Literal["1st", "2nd", "3rd", "4th"]
+class NotificationSettingsRequest(BaseModel):
+    mentions_and_comments: Optional[bool] = None
+    class_updates: Optional[bool] = None
+    study_reminders: Optional[bool] = None
+    seminar_invites: Optional[bool] = None
+
+    @model_validator(mode='after')
+    def at_least_one(self):
+        if all(v is None for v in [
+            self.mentions_and_comments,
+            self.class_updates,
+            self.study_reminders,
+            self.seminar_invites
+        ]):
+            raise ValueError("At least one setting must be provided")
+        return self
+
+
+class PrivacySettingsRequest(BaseModel):
+    content_visibility: Optional[Literal["public", "private"]] = None
+    message_permission: Optional[Literal["everyone", "friends_only"]] = None
+
+    @model_validator(mode='after')
+    def at_least_one(self):
+        if self.content_visibility is None and self.message_permission is None:
+            raise ValueError("At least one privacy setting must be provided")
+        return self
