@@ -168,6 +168,8 @@ async def get_student_profile(student_id: str) -> dict:
     profile_data = {
         "username": student.get("username", ""),
         "name": student.get("name", ""),
+        "email": student.get("email", ""),
+        "phone": student.get("phone", ""),
         "bio": student.get("bio"),
         "location": student.get("location"),
         "gender": student.get("gender", ""),
