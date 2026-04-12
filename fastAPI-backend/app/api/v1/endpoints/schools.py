@@ -8,14 +8,23 @@ from datetime import datetime
 router = APIRouter()
 db = get_database()
 schools_collection = db['Schools']
+students_collection = db['Students']
+promoters_collection = db['Promoters']
+admins_collection = db['Admins']
 
 @router.post("/signup", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
 async def register_school(user: SchoolCollegeSignup):
-    # Check for existing email
-    if await schools_collection.find_one({"email": user.email}):
+    # Check email across ALL user collections
+    email_exists = (
+        await schools_collection.find_one({"email": user.email}) or
+        await students_collection.find_one({"email": user.email}) or
+        await promoters_collection.find_one({"email": user.email}) or
+        await admins_collection.find_one({"email": user.email})
+    )
+    if email_exists:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Email already registered!"
+            detail="Email already registered in the system!"
         )
     
     # Check for existing phone

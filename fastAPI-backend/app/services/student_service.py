@@ -14,13 +14,25 @@ from app.models.student import StudentSignup, UpdateStudent, StudentStatusUpdate
 
 db = get_database()
 students_collection: Collection = db['Students']
+promoters_collection: Collection = db['Promoters']
+admins_collection: Collection = db['Admins']
+schools_collection: Collection = db['Schools']
 
 async def create_student(user: StudentSignup) -> dict:
     
     if await students_collection.find_one({"username": user.username}):
         raise HTTPException(status_code=400, detail="Username already taken!")
-    if await students_collection.find_one({"email": user.email}):
-        raise HTTPException(status_code=400, detail="Email already registered!")
+    
+    # Check email across ALL user collections
+    email_exists = (
+        await students_collection.find_one({"email": user.email}) or
+        await promoters_collection.find_one({"email": user.email}) or
+        await admins_collection.find_one({"email": user.email}) or
+        await schools_collection.find_one({"email": user.email})
+    )
+    if email_exists:
+        raise HTTPException(status_code=400, detail="Email already registered in the system!")
+
     if await students_collection.find_one({"phone": user.phone}):
         raise HTTPException(status_code=400, detail="Phone number already registered!")
 
