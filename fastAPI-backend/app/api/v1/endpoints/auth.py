@@ -29,7 +29,7 @@ async def login_user(data: LoginRequest):
         (students_col, "Student"),
         (admins_col, "Admin"),
         (schools_col, "School/College"),
-        (promoters_col, "Promoter")
+        (promoters_col, "Promoter"),
         (donors_col, "donor")
     ]
 
