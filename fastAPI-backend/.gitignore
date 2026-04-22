@@ -62,3 +62,4 @@ node_modules/
 
 # If you want to keep tests versioned, remove test_endpoints.py from this list.
 # test_endpoints.py
+scratch/

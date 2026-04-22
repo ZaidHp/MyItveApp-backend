@@ -12,6 +12,7 @@ students_col = db['Students']
 admins_col = db['Admins']
 schools_col = db['Schools']
 promoters_col = db['Promoters']
+donors_col = db['Donors']
 
 class LoginRequest(BaseModel):
     username_or_email: str = Field(..., description="Enter your Email or Username")
@@ -29,6 +30,7 @@ async def login_user(data: LoginRequest):
         (admins_col, "Admin"),
         (schools_col, "School/College"),
         (promoters_col, "Promoter")
+        (donors_col, "donor")
     ]
 
     for collection, role_name in collections_map:
