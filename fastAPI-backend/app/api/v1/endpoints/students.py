@@ -1,8 +1,8 @@
 from fastapi import APIRouter, status, Depends, UploadFile, File
-from app.models.student import StudentSignup, UpdateStudent, StudentStatusUpdate, StudentProfileResponse, StudentProfileUpdate
-from app.models.common import UserResponse
-from app.api.deps import get_current_user
-from app.services import student_service
+from models.student import StudentSignup, UpdateStudent, StudentStatusUpdate, StudentProfileResponse, StudentProfileUpdate
+from models.common import UserResponse
+from api.deps import get_current_user
+from services import student_service
 
 router = APIRouter()
 
@@ -26,8 +26,7 @@ async def upload_profile(file: UploadFile = File(...), current_user=Depends(get_
     
     return {
         "message": "Image uploaded successfully", 
-        "filename": filename,
-        "url": f"/uploads/{filename}" # Optional: if you serve static files
+        "url": filename
     }
 
 # ==================== UPDATE PROFILE ====================
@@ -86,7 +85,7 @@ async def upload_experience_image(
     
     return {
         "message": f"{exp_type} image uploaded successfully", 
-        "filename": filename
+        "url": filename
     }
 
 @router.delete("/remove_profile_image", status_code=status.HTTP_200_OK)

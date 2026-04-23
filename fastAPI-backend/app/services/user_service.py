@@ -1,11 +1,10 @@
-from app.core.database import get_database
+from core.database import get_database
 
 db = get_database()
 admins_collection = db['Admins']
 students_collection = db['Students']
 schools_collection = db['Schools']
 promoters_collection = db['Promoters']
-donors_collection = db['Donors']
 
 async def get_user_counts() -> dict:
     """
@@ -15,17 +14,15 @@ async def get_user_counts() -> dict:
     students = await students_collection.count_documents({})
     schools = await schools_collection.count_documents({})
     promoters = await promoters_collection.count_documents({})
-    donors = await donors_collection.count_documents({})
     
-    total_users = admins + students + schools + promoters + donors
+    total_users = admins + students + schools + promoters
     
     return {
         "total_users": total_users,
         "admins": admins,
         "students": students,
         "schools_colleges": schools,
-        "promoters": promoters,
-        "donors": donors
+        "promoters": promoters
     }
 
 async def get_all_users_list() -> dict:
@@ -49,14 +46,12 @@ async def get_all_users_list() -> dict:
     students = await fetch_from_collection(students_collection)
     schools = await fetch_from_collection(schools_collection)
     promoters = await fetch_from_collection(promoters_collection)
-    donors = await fetch_from_collection(donors_collection)
 
     # Combine into a single list
     all_users.extend(admins)
     all_users.extend(students)
     all_users.extend(schools)
     all_users.extend(promoters)
-    all_users.extend(donors)
 
     return {
         "total_users": len(all_users),

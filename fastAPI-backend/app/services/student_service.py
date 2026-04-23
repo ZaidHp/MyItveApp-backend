@@ -1,38 +1,31 @@
-import os
-import aiofiles
+import cloudinary
+import cloudinary.uploader
 from datetime import datetime
-from uuid import uuid4
 from bson import ObjectId
 from bson.errors import InvalidId
 from fastapi import HTTPException, status, UploadFile
 from pymongo.collection import Collection
 
-from app.core.database import get_database
-from app.core.config import settings
-from app.core.security import hash_password, verify_password
-from app.models.student import StudentSignup, UpdateStudent, StudentStatusUpdate
+from core.database import get_database
+from core.config import settings
+from core.security import hash_password, verify_password
+
+cloudinary.config(
+    cloud_name=settings.CLOUDINARY_CLOUD_NAME,
+    api_key=settings.CLOUDINARY_API_KEY,
+    api_secret=settings.CLOUDINARY_API_SECRET
+)
+from models.student import StudentSignup, UpdateStudent, StudentStatusUpdate
 
 db = get_database()
 students_collection: Collection = db['Students']
-promoters_collection: Collection = db['Promoters']
-admins_collection: Collection = db['Admins']
-schools_collection: Collection = db['Schools']
 
 async def create_student(user: StudentSignup) -> dict:
     
     if await students_collection.find_one({"username": user.username}):
         raise HTTPException(status_code=400, detail="Username already taken!")
-    
-    # Check email across ALL user collections
-    email_exists = (
-        await students_collection.find_one({"email": user.email}) or
-        await promoters_collection.find_one({"email": user.email}) or
-        await admins_collection.find_one({"email": user.email}) or
-        await schools_collection.find_one({"email": user.email})
-    )
-    if email_exists:
-        raise HTTPException(status_code=400, detail="Email already registered in the system!")
-
+    if await students_collection.find_one({"email": user.email}):
+        raise HTTPException(status_code=400, detail="Email already registered!")
     if await students_collection.find_one({"phone": user.phone}):
         raise HTTPException(status_code=400, detail="Phone number already registered!")
 
@@ -61,38 +54,39 @@ async def upload_profile_image(file: UploadFile, student_id: str) -> str:
     if not student:
         raise HTTPException(status_code=404, detail="Student not found")
 
-    ext = os.path.splitext(file.filename)[1].lower()
-    if ext not in settings.ALLOWED_EXTENSIONS:
+    ext = file.filename.rsplit(".", 1)[-1].lower() if file.filename else ""
+    if f".{ext}" not in settings.ALLOWED_EXTENSIONS:
         raise HTTPException(status_code=400, detail="Only jpg, jpeg, png allowed")
 
-    os.makedirs(settings.UPLOAD_DIR, exist_ok=True)
-    unique_name = f"{uuid4().hex}{ext}"
-    file_path = os.path.join(settings.UPLOAD_DIR, unique_name)
-
     try:
-        async with aiofiles.open(file_path, "wb") as f:
-            content = await file.read()
-            await f.write(content)
+        result = cloudinary.uploader.upload(
+            file.file,
+            folder="itve/profile_images",
+            resource_type="image"
+        )
+        url = result.get("secure_url")
+        public_id = result.get("public_id")
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"File upload failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Image upload to Cloudinary failed: {str(e)}")
 
-    old_image = student.get("profile_image")
-    if old_image:
-        old_image_path = os.path.join(settings.UPLOAD_DIR, old_image)
-        if os.path.exists(old_image_path):
-            try:
-                os.remove(old_image_path)
-                print(f"Deleted old profile image: {old_image}")
-            except Exception as e:
-                print(f"Failed to delete old image {old_image}: {str(e)}")
+    # Destroy old image from Cloudinary if exists
+    old_public_id = student.get("profile_image_public_id")
+    if old_public_id:
+        try:
+            cloudinary.uploader.destroy(old_public_id)
+        except Exception:
+            pass  # Non-critical: old image cleanup failure
 
     await students_collection.update_one(
         {"_id": obj_id},
-        {"$set": {"profile_image": unique_name, "updated_at": datetime.now()}}
+        {"$set": {
+            "profile_image": url,
+            "profile_image_public_id": public_id,
+            "updated_at": datetime.now()
+        }}
     )
 
-    return unique_name
-
+    return url
 
 async def update_student_profile(student_id: str, update_data: UpdateStudent) -> dict:
 
@@ -121,6 +115,8 @@ async def update_student_profile(student_id: str, update_data: UpdateStudent) ->
                 
                 if data_dict[field].get("img") is None and current_db_data.get("img"):
                     data_dict[field]["img"] = current_db_data.get("img")
+                if data_dict[field].get("img_public_id") is None and current_db_data.get("img_public_id"):
+                    data_dict[field]["img_public_id"] = current_db_data.get("img_public_id")
             
             update_fields[field] = data_dict[field]
 
@@ -180,8 +176,6 @@ async def get_student_profile(student_id: str) -> dict:
     profile_data = {
         "username": student.get("username", ""),
         "name": student.get("name", ""),
-        "email": student.get("email", ""),
-        "phone": student.get("phone", ""),
         "bio": student.get("bio"),
         "location": student.get("location"),
         "gender": student.get("gender", ""),
@@ -243,43 +237,42 @@ async def upload_experience_image(file: UploadFile, student_id: str, exp_type: s
     if not student:
         raise HTTPException(status_code=404, detail="Student not found")
 
-    ext = os.path.splitext(file.filename)[1].lower()
-    if ext not in settings.ALLOWED_EXTENSIONS:
+    ext = file.filename.rsplit(".", 1)[-1].lower() if file.filename else ""
+    if f".{ext}" not in settings.ALLOWED_EXTENSIONS:
         raise HTTPException(status_code=400, detail="Only jpg, jpeg, png allowed")
 
-    os.makedirs(settings.UPLOAD_DIR, exist_ok=True)
-    unique_name = f"{uuid4().hex}{ext}"
-    file_path = os.path.join(settings.UPLOAD_DIR, unique_name)
-
     try:
-        async with aiofiles.open(file_path, "wb") as f:
-            content = await file.read()
-            await f.write(content)
+        result = cloudinary.uploader.upload(
+            file.file,
+            folder="itve/experience_images",
+            resource_type="image"
+        )
+        url = result.get("secure_url")
+        public_id = result.get("public_id")
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"File upload failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Image upload to Cloudinary failed: {str(e)}")
 
     current_exp = student.get(exp_type)
     
     if not isinstance(current_exp, dict):
         current_exp = {"name": "", "role": ""}
         
-    old_image = current_exp.get("img")
-    if old_image:
-        old_image_path = os.path.join(settings.UPLOAD_DIR, old_image)
-        if os.path.exists(old_image_path):
-            try:
-                os.remove(old_image_path)
-                print(f"Deleted old {exp_type} image: {old_image}")
-            except Exception as e:
-                print(f"Failed to delete old image {old_image}: {str(e)}")
+    # Destroy old image from Cloudinary if exists
+    old_public_id = current_exp.get("img_public_id")
+    if old_public_id:
+        try:
+            cloudinary.uploader.destroy(old_public_id)
+        except Exception:
+            pass  # Non-critical: old image cleanup failure
 
-    current_exp["img"] = unique_name
+    current_exp["img"] = url
+    current_exp["img_public_id"] = public_id
 
     await students_collection.update_one(
         {"_id": obj_id},
         {"$set": {exp_type: current_exp, "updated_at": datetime.now()}}
     )
-    return unique_name
+    return url
 
 async def remove_profile_image(student_id: str) -> dict:
     try:
@@ -291,19 +284,21 @@ async def remove_profile_image(student_id: str) -> dict:
     if not student:
         raise HTTPException(status_code=404, detail="Student not found")
 
-    old_image = student.get("profile_image")
-    if old_image:
-        old_image_path = os.path.join(settings.UPLOAD_DIR, old_image)
-        if os.path.exists(old_image_path):
-            try:
-                os.remove(old_image_path)
-                print(f"Deleted profile image: {old_image}")
-            except Exception as e:
-                print(f"Failed to delete image {old_image}: {str(e)}")
+    # Destroy image from Cloudinary if exists
+    old_public_id = student.get("profile_image_public_id")
+    if old_public_id:
+        try:
+            cloudinary.uploader.destroy(old_public_id)
+        except Exception:
+            pass  # Non-critical: old image cleanup failure
 
     await students_collection.update_one(
         {"_id": obj_id},
-        {"$set": {"profile_image": None, "updated_at": datetime.now()}}
+        {"$set": {
+            "profile_image": None,
+            "profile_image_public_id": None,
+            "updated_at": datetime.now()
+        }}
     )
 
-    return {"message": "Profile picture removed successfully"}
+    return {"message": "Profile picture removed successfully"}

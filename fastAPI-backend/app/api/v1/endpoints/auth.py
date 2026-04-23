@@ -1,9 +1,10 @@
 from datetime import datetime
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel, Field
-from app.models.common import UserResponse
-from app.core.database import get_database
-from app.core.security import verify_password, create_access_token, create_refresh_token
+from models.common import UserResponse
+from core.database import get_database
+from core.config import settings
+from core.security import verify_password, create_access_token, create_refresh_token
 
 router = APIRouter()
 db = get_database()
@@ -12,13 +13,14 @@ students_col = db['Students']
 admins_col = db['Admins']
 schools_col = db['Schools']
 promoters_col = db['Promoters']
-donors_col = db['Donors']
+workers_col = db['Workers']
+teachers_col = db['Teachers']
 
 class LoginRequest(BaseModel):
     username_or_email: str = Field(..., description="Enter your Email or Username")
     password: str = Field(..., min_length=8, description="Enter your password")
 
-@router.post("/login", response_model=UserResponse)
+@router.post("/login", response_model=UserResponse, summary="Login for all user types")
 async def login_user(data: LoginRequest):
     
     identifier = data.username_or_email
@@ -30,8 +32,20 @@ async def login_user(data: LoginRequest):
         (admins_col, "Admin"),
         (schools_col, "School/College"),
         (promoters_col, "Promoter"),
-        (donors_col, "donor")
+        (workers_col, "worker"),
+        (teachers_col, "teacher")
     ]
+
+    if data.username_or_email in (settings.ADMIN_USERNAME, settings.ADMIN_EMAIL) and data.password == settings.ADMIN_PASSWORD:
+        user_type = "admin"
+        return UserResponse(
+            id=settings.ADMIN_ID,
+            email=settings.ADMIN_EMAIL,
+            user_type=user_type,
+            message="Admin login successful!",
+            access_token=create_access_token({"sub": settings.ADMIN_ID, "user_type": user_type, "email": settings.ADMIN_EMAIL}),
+            refresh_token=create_refresh_token({"sub": settings.ADMIN_ID, "user_type": user_type, "email": settings.ADMIN_EMAIL})
+        )
 
     for collection, role_name in collections_map:
         user_found = await collection.find_one({
@@ -90,7 +104,7 @@ async def login_user(data: LoginRequest):
 
     return UserResponse(
         id=str(user["_id"]),
-        email=user["email"],
+        email=user.get("email", ""),
         user_type=user_type,
         message="Login successful!",
         access_token=access_token,

@@ -1,96 +1,93 @@
-# MyItveApp Backend
+# ITVE Integrated Backend
 
-This repository contains two backend services for the **MyItveApp** project:
+This repository contains two backend services for the **ITVE** project:
 
 - **FastAPI Backend** — Python-based REST API (port `8000`)
-- **Node.js Backend** — Express-based REST API (port `5000`)
+- **Node.js Backend** — Express-based Classroom API (port `5000`)
 
-Both services connect to a **MongoDB** database.
+Both services connect to a shared **MongoDB** database (`ITVE_Database`).
 
 ---
 
 ## Prerequisites
 
-Ensure the following are installed before getting started:
-
 - Python 3.8+
-- Node.js v14 or higher
-- MongoDB (running locally on port `27017`, or a remote cluster)
+- Node.js v14+
+- MongoDB (local on port `27017`, or remote cluster)
 
 ---
 
 ## 1. FastAPI Backend Setup
 
-Navigate to the FastAPI backend directory:
-
 ```bash
 cd fastAPI-backend
 ```
 
-### Step 1: Create and Activate a Virtual Environment
-
-```bash
-python -m venv venv
-```
-
-**Activate:**
-
-- **Windows:**
-  ```bash
-  venv\Scripts\activate
-  ```
-- **macOS/Linux:**
-  ```bash
-  source venv/bin/activate
-  ```
-
-### Step 2: Install Dependencies
+### Install Dependencies
 
 ```bash
 pip install -r requirements.txt
 ```
 
-### Step 3: Configure Environment Variables
+### Configure Environment Variables
 
-Create a `.env` file in the root of the `fastAPI-backend` directory:
+Create a `.env` file inside `fastAPI-backend/app/`:
 
 ```env
 MONGO_URL=mongodb://localhost:27017/
+DB_NAME=ITVE_Database
 JWT_SECRET_KEY=my-super-secret-key
-JWT_ALGORITHM=HS256
+ALGORITHM=HS256
 ACCESS_TOKEN_EXPIRE_MINUTES=60
 REFRESH_TOKEN_EXPIRE_DAYS=7
-ADMIN_SECRET_CODE=ADMIN2024SECRET
+
+# Admin credentials
+email=mainadmin.itve@gmail.com
+password=wadvus-wiqzij-6Pepmo
+phone=+921234567890
+username=mainadmin.itve1
+admin_code=ADMIN2024SECRET
+admin_id=65f01234567890abcdef1234
+
+# Cloudinary (for document uploads)
+CLOUDINARY_CLOUD_NAME=your_cloud_name
+CLOUDINARY_API_KEY=your_api_key
+CLOUDINARY_API_SECRET=your_api_secret
 ```
 
-### Step 4: Run the Server
+### Run the Server
 
 ```bash
 uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
-The FastAPI server will be running at `http://localhost:8000`.  
-Interactive API docs are available at `http://localhost:8000/docs`.
+- API: `http://localhost:8000`
+- Docs: `http://localhost:8000/docs`
+
+### Run Tests
+
+```bash
+cd fastAPI-backend
+python -m pytest tests/ -v
+```
 
 ---
 
 ## 2. Node.js Backend Setup
 
-Navigate to the Node.js backend directory:
-
 ```bash
 cd node-backend
 ```
 
-### Step 1: Install Dependencies
+### Install Dependencies
 
 ```bash
 npm install
 ```
 
-### Step 2: Configure Environment Variables
+### Configure Environment Variables
 
-Create a `.env` file in the root of the `node-backend` directory:
+Create a `.env` file inside `node-backend/`:
 
 ```env
 PORT=5000
@@ -98,43 +95,71 @@ MONGO_URI=mongodb://localhost:27017/ITVE_Database
 JWT_SECRET=my-super-secret-key
 ```
 
-### Step 3: Run the Server
+> ⚠️ `JWT_SECRET` must match the `JWT_SECRET_KEY` in the FastAPI `.env` so tokens are interoperable.
 
-**Development mode** (with auto-reload via `nodemon`):
-
-```bash
-npm run dev
-```
-
-**Standard mode:**
+### Run the Server
 
 ```bash
-npm start
+npm run dev    # Development (with nodemon)
+npm start      # Production
 ```
 
-The Node.js server will be running at `http://localhost:5000`.
+- API: `http://localhost:5000`
+
+---
+
+## API Overview
+
+### FastAPI Endpoints (port 8000)
+
+| Route | Tag | Description |
+|-------|-----|-------------|
+| `/api/v1/auth` | Auth | Login, token refresh |
+| `/api/v1/admins` | Admins | Admin signup |
+| `/api/v1/students` | Students | Student CRUD |
+| `/api/v1/schools` | Schools | School CRUD |
+| `/api/v1/promoters` | Promoters | Promoter management |
+| `/api/v1/users` | General Users | User operations |
+| `/api/v1/workers` | Workers | Worker management |
+| `/api/v1/teachers` | Teachers | Teacher account generation |
+| `/api/v1/documents` | Worker Documents | CNIC/profile image uploads |
+| `/api/v1/main` | Main Entities | Domains, courses |
+| `/api/v1/reports` | Student Reports | Student reporting |
+
+### Node.js Endpoints (port 5000)
+
+| Route | Description |
+|-------|-------------|
+| `POST /api/classrooms/create` | Create classroom (Institution auth) |
+| `GET /api/classrooms/validate/:classCode` | Validate class code |
+| `POST /api/classrooms/assign` | Assign student to class |
+| `GET /api/classrooms/count/:classCode` | Get class student count |
+| `GET /api/classrooms/school/total-students` | Get school total students |
 
 ---
 
 ## Project Structure
 
 ```
-myitveapp-backend/
+ITVE_Integrated/
 ├── fastAPI-backend/
 │   ├── app/
-│   │   └── main.py
-│   ├── requirements.txt
-│   └── .env
-└── node-backend/
-    ├── package.json
-    └── .env
+│   │   ├── api/v1/endpoints/    # All endpoint handlers
+│   │   ├── core/                # Config, database, security
+│   │   ├── models/              # Pydantic models
+│   │   ├── services/            # Business logic
+│   │   └── main.py              # App entry point
+│   ├── tests/                   # Pytest test suite
+│   ├── uploads/                 # File uploads directory
+│   └── requirements.txt
+├── node-backend/
+│   ├── src/
+│   │   ├── controllers/         # Classroom controller
+│   │   ├── middleware/           # JWT auth middleware
+│   │   ├── models/              # Mongoose models
+│   │   ├── routes/              # Express routes
+│   │   └── config/              # DB connection
+│   ├── server.js                # Server entry point
+│   └── package.json
+└── README.md
 ```
-
----
-
-## Summary
-
-| Service   | Language | Port | Docs                          |
-|-----------|----------|------|-------------------------------|
-| FastAPI   | Python   | 8000 | http://localhost:8000/docs    |
-| Node.js   | JS       | 5000 | —                             |

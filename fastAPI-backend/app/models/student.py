@@ -168,8 +168,6 @@ class UpdateStudent(BaseModel):
 class StudentProfileResponse(BaseModel):
     username: str
     name: str
-    email: str
-    phone: str
     bio: Optional[str] = None
     location: Optional[str] = None
     gender: Optional[str] = None        
